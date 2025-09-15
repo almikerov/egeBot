@@ -4,7 +4,7 @@ import random
 import time
 import contextlib
 import json
-import os # <-- Добавляем импорт для работы с файловой системой
+import os
 from aiogram import F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
@@ -20,7 +20,7 @@ import robokassa_api
 from config import ADMIN_PASSWORD, SUPER_ADMIN_ID
 from text_manager import get_text
 from price_manager import load_prices, save_prices
-from prompt_manager import load_prompt
+from prompt_manager import DEFAULT_PROMPT # ИЗМЕНЕНО: Импортируем дефолтный промпт
 
 router = Router()
 
@@ -40,12 +40,10 @@ class AdminState(StatesGroup):
 
 # --- Вспомогательные функции ---
 async def is_admin(user_id: int) -> bool:
-    """Проверяет, является ли пользователь администратором."""
     admins = await db.get_admins()
     return user_id in admins
 
 async def get_user_status_text(user_id: int) -> str:
-    """Возвращает текстовое описание статуса пользователя."""
     is_subscribed, end_date = await db.check_subscription(user_id)
     if is_subscribed:
         if end_date:
@@ -63,7 +61,6 @@ async def get_user_status_text(user_id: int) -> str:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
-    """Обработчик команды /start, открывает главное меню."""
     await state.clear()
     await db.add_user(message.from_user.id, message.from_user.username)
     status_text = await get_user_status_text(message.from_user.id)
@@ -74,7 +71,6 @@ async def cmd_start(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "main_menu")
 async def show_main_menu(callback: CallbackQuery, state: FSMContext):
-    """Показывает главное меню, обрабатывая разные типы сообщений."""
     await state.clear()
     status_text = await get_user_status_text(callback.from_user.id)
     text = get_text('start', status_text=status_text)
@@ -104,7 +100,7 @@ async def show_info_menu(callback: CallbackQuery):
 @router.callback_query(F.data == "show_offer")
 async def show_offer_text(callback: CallbackQuery):
     try:
-        offer_document = FSInputFile("offer.docx")
+        offer_document = FSInputFile("offer.docx") 
         await callback.message.delete()
         await callback.message.answer_document(
             offer_document,
@@ -153,7 +149,7 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
         return
 
     await callback.answer("⏳ Проверяем статус платежа...")
-
+    
     is_paid = await robokassa_api.check_payment(invoice_id)
 
     if is_paid:
@@ -220,12 +216,10 @@ async def give_task(callback: CallbackQuery, state: FSMContext, tasks_info: dict
 async def voice_message_handler(message: Message, state: FSMContext):
     await message.answer(get_text('voice_accepted'))
     
-    # ИЗМЕНЕНО: Определяем пути к файлам заранее
     voice_ogg_path = f"voice_{message.from_user.id}.ogg"
     voice_mp3_path = voice_ogg_path.replace(".ogg", ".mp3")
 
     try:
-        # Основная логика обработки
         voice_file_info = await message.bot.get_file(message.voice.file_id)
         await message.bot.download_file(voice_file_info.file_path, voice_ogg_path)
         
@@ -246,15 +240,12 @@ async def voice_message_handler(message: Message, state: FSMContext):
         )
 
     finally:
-        # ИЗМЕНЕНО: Блок finally для гарантированного удаления файлов
-        await state.clear() # Очищаем состояние в любом случае
+        await state.clear()
         
-        # Удаляем ogg файл, если он существует
         if os.path.exists(voice_ogg_path):
             os.remove(voice_ogg_path)
             print(f"Файл {voice_ogg_path} удален.")
             
-        # Удаляем mp3 файл, если он существует
         if os.path.exists(voice_mp3_path):
             os.remove(voice_mp3_path)
             print(f"Файл {voice_mp3_path} удален.")
@@ -296,11 +287,12 @@ async def admin_view_prompt(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin_edit_prompt")
 async def admin_edit_prompt_start(callback: CallbackQuery, state: FSMContext):
-    current_prompt = load_prompt()
+    # ИЗМЕНЕНО: В качестве примера показывается дефолтный промпт
+    example_prompt = DEFAULT_PROMPT
     text = (
         "Пришлите новый текст промпта. Используйте {task_text} и {user_text} как переменные.\n\n"
-        "<b>Текущий промпт для примера:</b>\n"
-        f"<pre>{current_prompt}</pre>"
+        "<b>Дефолтный промпт для примера:</b>\n"
+        f"<pre>{example_prompt}</pre>"
     )
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.back_to_admin_menu_keyboard())
     await state.set_state(AdminState.waiting_for_new_prompt)
@@ -361,32 +353,58 @@ async def admin_management_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin_view_admins")
 async def view_admins(callback: CallbackQuery):
-    admins = await db.get_admins()
-    text = "<b>Список администраторов:</b>\n"
-    for admin_id in admins:
-        text += f'• <a href="tg://user?id={admin_id}">{admin_id}</a>'
+    # ИЗМЕНЕНО: Отображаем имена и делаем ссылки
+    admins_ids = await db.get_admins()
+    text_lines = ["<b>Список администраторов:</b>"]
+    
+    for admin_id in admins_ids:
+        try:
+            chat = await callback.bot.get_chat(admin_id)
+            display_name = chat.full_name or chat.username or f"User {admin_id}"
+            line = f'• <a href="tg://user?id={admin_id}">{display_name}</a> (<code>{admin_id}</code>)'
+        except Exception:
+            display_name = f"User {admin_id}"
+            line = f'• <a href="tg://user?id={admin_id}">{display_name}</a>'
+            
         if admin_id == SUPER_ADMIN_ID:
-            text += " (⭐ Супер-админ)"
-        text += "\n"
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.back_to_admins_menu_keyboard())
+            line += " (⭐ Супер-админ)"
+        text_lines.append(line)
+        
+    await callback.message.edit_text("\n".join(text_lines), parse_mode="HTML", reply_markup=kb.back_to_admins_menu_keyboard())
     await callback.answer()
 
 @router.callback_query(F.data == "admin_add_admin")
 async def add_admin_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdminState.waiting_for_admin_id_to_add)
+    # ИЗМЕНЕНО: Обновляем текст в texts.yml (нужно сделать вручную)
+    # admin_add_prompt: "Пришлите ID или @username пользователя, которого хотите сделать администратором."
     await callback.message.edit_text(get_text('admin_add_prompt'), reply_markup=kb.back_to_admins_menu_keyboard())
     await callback.answer()
 
 @router.message(AdminState.waiting_for_admin_id_to_add, F.text)
 async def add_admin_finish(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("ID пользователя должен быть числом. Попробуйте снова.")
-        return
+    # ИЗМЕНЕНО: Добавляем логику для обработки ID и @username
+    user_input = message.text
+    admin_id = None
     
-    admin_id = int(message.text)
-    await db.add_admin(admin_id)
-    await state.clear()
-    await message.answer(get_text('admin_add_success', id=admin_id), reply_markup=kb.admin_management_keyboard())
+    if user_input.isdigit():
+        admin_id = int(user_input)
+    elif user_input.startswith('@'):
+        username = user_input[1:]
+        user_data = await db.get_user_by_username(username)
+        if user_data:
+            admin_id = user_data[0]
+        else:
+            await message.answer(f"Пользователь @{username} не найден в базе данных. Попросите его сначала запустить бота.")
+            return
+    else:
+        await message.answer("Неверный формат. Пришлите ID пользователя (только цифры) или его @username.")
+        return
+
+    if admin_id:
+        await db.add_admin(admin_id)
+        await state.clear()
+        await message.answer(get_text('admin_add_success', id=admin_id), reply_markup=kb.admin_management_keyboard())
 
 @router.callback_query(F.data == "admin_remove_admin")
 async def remove_admin_start(callback: CallbackQuery, state: FSMContext):
@@ -421,7 +439,15 @@ async def view_subscribed_users(callback: CallbackQuery):
         for user in users:
             user_id, username, end_date_str = user
             end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-            text += f'• <b>ID:</b> <a href="tg://user?id={user_id}">{user_id}</a>\n'
+            
+            # ИЗМЕНЕНО: Отображаем имя или @username и делаем ссылку
+            try:
+                chat = await callback.bot.get_chat(user_id)
+                display_name = chat.full_name or chat.username or f"User {user_id}"
+            except Exception:
+                display_name = username or f"User {user_id}"
+
+            text += f'• <a href="tg://user?id={user_id}">{display_name}</a> (<code>{user_id}</code>)\n'
             if username and username != 'None':
                  text += f"  <b>Username:</b> @{username}\n"
             text += f"  <b>До:</b> {end_date}\n\n"

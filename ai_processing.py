@@ -4,10 +4,8 @@ import asyncio
 import whisper
 import google.generativeai as genai
 from pydub import AudioSegment
-from config import GEMINI_API_KEYS  # Импортируем список ключей
+from config import GEMINI_API_KEYS
 from prompt_manager import load_prompt
-
-# Убираем genai.configure() отсюда, так как будем настраивать его для каждого запроса
 
 print("Загрузка модели Whisper... (это может занять несколько минут)")
 whisper_model = whisper.load_model("base")
@@ -30,10 +28,8 @@ async def get_ai_review(task_text: str, user_text: str) -> str:
     base_prompt = load_prompt()
     prompt = base_prompt.format(task_text=task_text, user_text=user_text)
     
-    # Перебираем все доступные ключи
     for api_key in GEMINI_API_KEYS:
         try:
-            # Настраиваем API с текущим ключом
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel('gemini-1.5-flash')
             
@@ -43,10 +39,8 @@ async def get_ai_review(task_text: str, user_text: str) -> str:
             return response.text
         
         except Exception as e:
-            # Если ключ не сработал (например, из-за лимитов), выводим ошибку и пробуем следующий
             print(f"Ошибка с ключом ...{api_key[-4:]}: {e}")
-            continue # Переходим к следующему ключу
+            continue
             
-    # Если ни один из ключей не сработал
     print("Все API ключи не сработали.")
-    return "К сожалению, не удалось получить рецензию от AI. Все доступные API ключи исчерпали свои лимиты или не работают. Попробуйте позже."
+    return "Бот сейчас перегружен. Пожалуйста, попробуйте еще раз через несколько минут."
