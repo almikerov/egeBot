@@ -2,7 +2,9 @@
 
 import random
 import time
+import contextlib
 from aiogram import F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -57,13 +59,21 @@ async def cmd_start(message: Message):
 
 @router.callback_query(F.data == "main_menu")
 async def show_main_menu(callback: CallbackQuery):
-    """Показывает главное меню при нажатии на кнопку 'Назад'."""
+    """Показывает главное меню, обрабатывая разные типы сообщений."""
     status_text = await get_user_status_text(callback.from_user.id)
-    await callback.message.edit_text(
-        get_text('start', status_text=status_text),
-        reply_markup=kb.main_menu_keyboard()
-    )
+    text = get_text('start', status_text=status_text)
+    keyboard = kb.main_menu_keyboard()
+
+    # Пытаемся отредактировать сообщение. Если не получается (например, это документ) - отправляем новое.
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.answer()
+        return
+
+    await callback.message.delete()
+    await callback.message.answer(text, reply_markup=keyboard)
     await callback.answer()
+
 
 # --- Раздел "Информация" ---
 
@@ -82,7 +92,6 @@ async def show_info_menu(callback: CallbackQuery):
 async def show_offer_text(callback: CallbackQuery):
     """Отправляет документ с публичной офертой."""
     try:
-        # Ищем файл в корневой папке проекта
         offer_document = FSInputFile("offer.docx") 
         await callback.message.answer_document(
             offer_document,
