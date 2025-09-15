@@ -23,11 +23,4 @@ if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, ADMIN_PASSWORD, ROBOKASSA_MERCHANT_L
 # --- Параметры бота ---
 
 # Укажите ваш Telegram ID. Узнать можно у бота @userinfobot
-ADMIN_IDS = [1233372901] 
-
-# Цены на тарифы (в рублях)
-PRICES = {
-    "week": 299,
-    "month": 799,
-    "single": 50
-}
+ADMIN_IDS = [1233372901]
