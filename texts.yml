@@ -23,6 +23,12 @@ admin_welcome: "Добро пожаловать в админ-панель!"
 admin_prompt_request: "Пришлите новый текст промпта. Используйте {task_text} и {user_text} как переменные."
 admin_prompt_success: "✅ Промпт успешно обновлен!"
 admin_prompt_fail: "❌ Ошибка при сохранении промпта: {e}"
+admin_add_prompt: "Пришлите ID пользователя, которого хотите сделать администратором."
+admin_add_success: "✅ Пользователь с ID {id} успешно назначен администратором."
+admin_remove_prompt: "Пришлите ID администратора, которого хотите удалить."
+admin_remove_success: "✅ Администратор с ID {id} успешно удален."
+admin_remove_super_admin_error: "❌ Нельзя удалить супер-администратора."
+status_subscribed_no_date: "У тебя активна подписка."
 
 # --- Тексты для меню ---
 status_subscribed: "У тебя активна подписка до {end_date}."

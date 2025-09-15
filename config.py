@@ -22,5 +22,6 @@ if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, ADMIN_PASSWORD, ROBOKASSA_MERCHANT_L
 
 # --- Параметры бота ---
 
-# Укажите ваш Telegram ID. Узнать можно у бота @userinfobot
-ADMIN_IDS = [1233372901]
+# Укажите Telegram ID главного администратора. Его нельзя будет удалить через бота.
+# Узнать можно у бота @userinfobot
+SUPER_ADMIN_ID = 1233372901 # ЗАМЕНИТЕ НА ВАШ ID

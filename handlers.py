@@ -16,7 +16,7 @@ import keyboards as kb
 import database as db
 import ai_processing
 import robokassa_api
-from config import ADMIN_PASSWORD, ADMIN_IDS
+from config import ADMIN_PASSWORD, SUPER_ADMIN_ID
 from text_manager import get_text
 from price_manager import load_prices, save_prices
 
@@ -33,14 +33,24 @@ class UserState(StatesGroup):
 class AdminState(StatesGroup):
     waiting_for_new_prompt = State()
     waiting_for_new_price = State()
+    waiting_for_admin_id_to_add = State()
+    waiting_for_admin_id_to_remove = State()
 
-# --- Вспомогательная функция для получения статуса пользователя ---
+# --- Вспомогательные функции ---
+async def is_admin(user_id: int) -> bool:
+    """Проверяет, является ли пользователь администратором."""
+    admins = await db.get_admins()
+    return user_id in admins
+
 async def get_user_status_text(user_id: int) -> str:
     """Возвращает текстовое описание статуса пользователя."""
     is_subscribed, end_date = await db.check_subscription(user_id)
     if is_subscribed:
-        formatted_date = datetime.strptime(end_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-        return get_text('status_subscribed', end_date=formatted_date)
+        # Убедимся, что end_date не None перед форматированием
+        if end_date:
+            formatted_date = datetime.strptime(end_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+            return get_text('status_subscribed', end_date=formatted_date)
+        return get_text('status_subscribed_no_date') # На случай, если дата по какой-то причине отсутствует
 
     tasks_info = await db.get_available_tasks(user_id)
     if tasks_info['trials_left'] > 0:
@@ -51,8 +61,9 @@ async def get_user_status_text(user_id: int) -> str:
 # --- Обработчики основного меню ---
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
     """Обработчик команды /start, открывает главное меню."""
+    await state.clear() # Сбрасываем состояние при старте
     await db.add_user(message.from_user.id, message.from_user.username)
     status_text = await get_user_status_text(message.from_user.id)
     await message.answer(
@@ -61,8 +72,9 @@ async def cmd_start(message: Message):
     )
 
 @router.callback_query(F.data == "main_menu")
-async def show_main_menu(callback: CallbackQuery):
+async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     """Показывает главное меню, обрабатывая разные типы сообщений."""
+    await state.clear() # Сбрасываем состояние при возврате в меню
     status_text = await get_user_status_text(callback.from_user.id)
     text = get_text('start', status_text=status_text)
     keyboard = kb.main_menu_keyboard()
@@ -80,7 +92,6 @@ async def show_main_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "show_info")
 async def show_info_menu(callback: CallbackQuery):
-    """Показывает меню 'Информация'."""
     status_text = await get_user_status_text(callback.from_user.id)
     await callback.message.edit_text(
         get_text('info_text', status_text=status_text),
@@ -91,27 +102,22 @@ async def show_info_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "show_offer")
 async def show_offer_text(callback: CallbackQuery):
-    """Отправляет документ с публичной офертой."""
     try:
         offer_document = FSInputFile("offer.docx") 
+        await callback.message.delete()
         await callback.message.answer_document(
             offer_document,
             caption="📜 Публичная оферта",
             reply_markup=kb.back_to_main_menu_keyboard()
         )
-        await callback.message.delete()
     except FileNotFoundError:
-        await callback.message.edit_text(
-            get_text('offer_unavailable'),
-            reply_markup=kb.back_to_main_menu_keyboard()
-        )
+        await callback.answer(get_text('offer_unavailable'), show_alert=True)
     await callback.answer()
 
 # --- Раздел "Подписка и оплата" ---
 
 @router.callback_query(F.data == "show_subscribe_options")
 async def show_subscribe_menu(callback: CallbackQuery):
-    """Показывает меню выбора тарифов."""
     prices = load_prices()
     await callback.message.edit_text(
         get_text('subscribe_prompt'),
@@ -129,15 +135,12 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
 
     invoice_id = int(f"{user_id}{int(time.time())}")
     payment_link = robokassa_api.generate_payment_link(user_id, amount, invoice_id)
-    await state.update_data(invoice_id=invoice_id, tariff=tariff)
+    await state.update_data(invoice_id=invoice_id, tariff=tariff, amount=amount)
 
-    payment_kb = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text=f"💳 Оплатить {amount} RUB", url=payment_link)],
-        [types.InlineKeyboardButton(text="✅ Я оплатил, проверить", callback_data="check_robokassa_payment")],
-        [types.InlineKeyboardButton(text="⬅️ Назад", callback_data="show_subscribe_options")]
-    ])
-
-    await callback.message.edit_text(get_text('buy_prompt', tariff=tariff), reply_markup=payment_kb)
+    await callback.message.edit_text(
+        get_text('buy_prompt', tariff=tariff, amount=amount),
+        reply_markup=kb.payment_keyboard(payment_link, amount)
+    )
     await callback.answer()
 
 @router.callback_query(F.data == "check_robokassa_payment")
@@ -148,11 +151,12 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
         await callback.answer("Ошибка: не удалось найти счет. Пожалуйста, выберите тариф заново.", show_alert=True)
         return
 
-    await callback.message.edit_text("⏳ Проверяем статус платежа...")
+    await callback.answer("⏳ Проверяем статус платежа...")
     
     is_paid = await robokassa_api.check_payment(invoice_id)
 
     if is_paid:
+        await state.clear()
         if tariff in ["week", "month"]:
             days = 7 if tariff == "week" else 30
             await db.set_subscription(callback.from_user.id, days)
@@ -166,15 +170,10 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
                 get_text('payment_success_single'),
                 reply_markup=kb.main_menu_keyboard()
             )
-        await state.clear()
     else:
-        failed_kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text="Попробовать еще раз", callback_data="check_robokassa_payment")],
-            [types.InlineKeyboardButton(text="⬅️ Выбрать другой тариф", callback_data="show_subscribe_options")]
-        ])
         await callback.message.edit_text(
             get_text('payment_failed'),
-            reply_markup=failed_kb
+            reply_markup=kb.payment_failed_keyboard()
         )
     await callback.answer()
 
@@ -224,9 +223,10 @@ async def voice_message_handler(message: Message, state: FSMContext):
     await message.bot.download_file(voice_file_info.file_path, voice_ogg_path)
     recognized_text = await ai_processing.recognize_speech(voice_ogg_path)
 
+    await state.clear()
+
     if "Ошибка:" in recognized_text:
         await message.answer(recognized_text, reply_markup=kb.main_menu_keyboard())
-        await state.clear()
         return
 
     user_data = await state.get_data()
@@ -237,7 +237,6 @@ async def voice_message_handler(message: Message, state: FSMContext):
         parse_mode="HTML",
         reply_markup=kb.main_menu_keyboard()
     )
-    await state.clear()
 
 @router.message(UserState.waiting_for_voice)
 async def incorrect_message_handler(message: Message):
@@ -247,16 +246,18 @@ async def incorrect_message_handler(message: Message):
 
 @router.message(Command(ADMIN_PASSWORD))
 async def admin_login(message: Message):
-    if message.from_user.id in ADMIN_IDS:
+    if await is_admin(message.from_user.id):
         await message.answer(get_text('admin_welcome'), reply_markup=kb.admin_menu_keyboard())
     else:
         await message.answer("Неверная команда или недостаточно прав.")
 
 @router.callback_query(F.data == "admin_menu")
-async def show_admin_menu(callback: CallbackQuery):
+async def show_admin_menu(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     await callback.message.edit_text(get_text('admin_welcome'), reply_markup=kb.admin_menu_keyboard())
     await callback.answer()
 
+# --- Админ-панель: Промпт ---
 @router.callback_query(F.data == "admin_view_prompt")
 async def admin_view_prompt(callback: CallbackQuery):
     try:
@@ -287,13 +288,14 @@ async def admin_edit_prompt_finish(message: Message, state: FSMContext):
         await message.answer(get_text('admin_prompt_fail', e=e), reply_markup=kb.admin_menu_keyboard())
     await state.clear()
 
+# --- Админ-панель: Цены ---
 @router.callback_query(F.data == "admin_edit_prices")
 async def admin_edit_prices_start(callback: CallbackQuery):
     prices = load_prices()
     text = (f"Текущие цены:\n"
-            f"Неделя: {prices['week']} RUB\n"
-            f"Месяц: {prices['month']} RUB\n"
-            f"1 задание: {prices['single']} RUB\n\n"
+            f"Неделя: {prices.get('week', 'N/A')} RUB\n"
+            f"Месяц: {prices.get('month', 'N/A')} RUB\n"
+            f"1 задание: {prices.get('single', 'N/A')} RUB\n\n"
             f"Какую цену вы хотите изменить?")
     await callback.message.edit_text(text, reply_markup=kb.edit_prices_keyboard())
     await callback.answer()
@@ -322,3 +324,79 @@ async def admin_receive_new_price(message: Message, state: FSMContext):
 
     await message.answer(f"Цена для тарифа '{tariff}' успешно изменена на {new_price} RUB.", reply_markup=kb.admin_menu_keyboard())
     await state.clear()
+
+# --- Админ-панель: Управление администраторами ---
+@router.callback_query(F.data == "admin_manage_admins")
+async def admin_management_menu(callback: CallbackQuery):
+    await callback.message.edit_text("Меню управления администраторами:", reply_markup=kb.admin_management_keyboard())
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_view_admins")
+async def view_admins(callback: CallbackQuery):
+    admins = await db.get_admins()
+    text = "<b>Список администраторов:</b>\n"
+    for admin_id in admins:
+        text += f"• <code>{admin_id}</code>"
+        if admin_id == SUPER_ADMIN_ID:
+            text += " (⭐ Супер-админ)"
+        text += "\n"
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.back_to_admins_menu_keyboard())
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_add_admin")
+async def add_admin_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminState.waiting_for_admin_id_to_add)
+    await callback.message.edit_text(get_text('admin_add_prompt'), reply_markup=kb.back_to_admins_menu_keyboard())
+    await callback.answer()
+
+@router.message(AdminState.waiting_for_admin_id_to_add, F.text)
+async def add_admin_finish(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("ID пользователя должен быть числом. Попробуйте снова.")
+        return
+    
+    admin_id = int(message.text)
+    await db.add_admin(admin_id)
+    await state.clear()
+    await message.answer(get_text('admin_add_success', id=admin_id), reply_markup=kb.admin_management_keyboard())
+
+@router.callback_query(F.data == "admin_remove_admin")
+async def remove_admin_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminState.waiting_for_admin_id_to_remove)
+    await callback.message.edit_text(get_text('admin_remove_prompt'), reply_markup=kb.back_to_admins_menu_keyboard())
+    await callback.answer()
+
+@router.message(AdminState.waiting_for_admin_id_to_remove, F.text)
+async def remove_admin_finish(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("ID пользователя должен быть числом. Попробуйте снова.")
+        return
+
+    admin_id = int(message.text)
+    if admin_id == SUPER_ADMIN_ID:
+        await message.answer(get_text('admin_remove_super_admin_error'), reply_markup=kb.admin_management_keyboard())
+        await state.clear()
+        return
+
+    await db.remove_admin(admin_id)
+    await state.clear()
+    await message.answer(get_text('admin_remove_success', id=admin_id), reply_markup=kb.admin_management_keyboard())
+
+# --- Админ-панель: Пользователи ---
+@router.callback_query(F.data == "admin_view_subscribed")
+async def view_subscribed_users(callback: CallbackQuery):
+    users = await db.get_subscribed_users()
+    if not users:
+        text = "На данный момент нет пользователей с активной подпиской."
+    else:
+        text = "<b>Пользователи с активной подпиской:</b>\n\n"
+        for user in users:
+            user_id, username, end_date_str = user
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+            text += f"• <b>ID:</b> <code>{user_id}</code>\n"
+            if username and username != 'None':
+                 text += f"  <b>Username:</b> @{username}\n"
+            text += f"  <b>До:</b> {end_date}\n\n"
+    
+    await callback.message.edit_text(text, parse_mode='HTML', reply_markup=kb.back_to_admin_menu_keyboard())
+    await callback.answer()

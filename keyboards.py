@@ -18,6 +18,21 @@ def subscribe_menu_keyboard(prices: dict):
         [InlineKeyboardButton(text=f"1 задание - {prices.get('single', 'N/A')} RUB", callback_data="buy_single")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
     ])
+    
+def payment_keyboard(payment_link: str, amount: int):
+    """Клавиатура для оплаты."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💳 Оплатить {amount} RUB", url=payment_link)],
+        [InlineKeyboardButton(text="✅ Я оплатил, проверить", callback_data="check_robokassa_payment")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="show_subscribe_options")]
+    ])
+
+def payment_failed_keyboard():
+    """Клавиатура при неудачной проверке платежа."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Попробовать еще раз", callback_data="check_robokassa_payment")],
+        [InlineKeyboardButton(text="⬅️ Выбрать другой тариф", callback_data="show_subscribe_options")]
+    ])
 
 def info_menu_keyboard():
     """Возвращает клавиатуру для раздела 'Информация'."""
@@ -38,9 +53,11 @@ def back_to_main_menu_keyboard():
 def admin_menu_keyboard():
     """Возвращает клавиатуру главного меню админ-панели."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📄 Узнать текущий промпт", callback_data="admin_view_prompt")],
-        [InlineKeyboardButton(text="✏️ Изменить промпт", callback_data="admin_edit_prompt")],
-        [InlineKeyboardButton(text="💰 Изменить цены", callback_data="admin_edit_prices")]
+        [InlineKeyboardButton(text="📄 Промпт", callback_data="admin_view_prompt"), InlineKeyboardButton(text="✏️ Изменить промпт", callback_data="admin_edit_prompt")],
+        [InlineKeyboardButton(text="💰 Изменить цены", callback_data="admin_edit_prices")],
+        [InlineKeyboardButton(text="👑 Администраторы", callback_data="admin_manage_admins")],
+        [InlineKeyboardButton(text="👥 Пользователи с подпиской", callback_data="admin_view_subscribed")],
+        [InlineKeyboardButton(text="⬅️ Выйти из админ-панели", callback_data="main_menu")]
     ])
 
 def back_to_admin_menu_keyboard():
@@ -56,4 +73,19 @@ def edit_prices_keyboard():
         [InlineKeyboardButton(text="Месяц", callback_data="edit_price_month")],
         [InlineKeyboardButton(text="1 задание", callback_data="edit_price_single")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")]
+    ])
+
+def admin_management_keyboard():
+    """Клавиатура для управления администраторами."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Показать всех", callback_data="admin_view_admins")],
+        [InlineKeyboardButton(text="➕ Добавить", callback_data="admin_add_admin")],
+        [InlineKeyboardButton(text="➖ Удалить", callback_data="admin_remove_admin")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")]
+    ])
+
+def back_to_admins_menu_keyboard():
+    """Клавиатура для возврата в меню управления администраторами."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_manage_admins")]
     ])
