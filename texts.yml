@@ -29,5 +29,4 @@ status_subscribed: "У тебя активна подписка до {end_date}.
 status_trial: "У тебя есть {trials_left} бесплатных пробных задания."
 status_no_tasks: "У тебя не осталось бесплатных заданий."
 
-info_text: "<b>ℹ️ Информация</b>\n\n<b>Статус:</b> {status_text}\n<b>Контакты:</b> @your_support_contact" # Замените @your_support_contact на ваш контакт
-offer_text: "{offer_text}" # Сюда будет подставляться текст из offer.txt
+info_text: "<b>ℹ️ Информация</b>\n\n<b>Статус:</b> {status_text}\n<b>Контакты:</b>\nСамозанятый Микеров А.Д.\nИНН: 710602650795\nTelegram: @amikerov\nEmail: al.mikerov@gmail.com"

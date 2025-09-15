@@ -6,7 +6,7 @@ from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, FSInputFile
 from datetime import datetime
 
 import keyboards as kb
@@ -80,14 +80,16 @@ async def show_info_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "show_offer")
 async def show_offer_text(callback: CallbackQuery):
-    """Показывает текст публичной оферты."""
+    """Отправляет документ с публичной офертой."""
     try:
-        with open("offer.txt", "r", encoding="utf-8") as f:
-            offer_content = f.read()
-            await callback.message.edit_text(
-                get_text('offer_text', offer_text=offer_content),
-                reply_markup=kb.back_to_main_menu_keyboard()
-            )
+        # Ищем файл в корневой папке проекта
+        offer_document = FSInputFile("offer.docx") 
+        await callback.message.answer_document(
+            offer_document,
+            caption="📜 Публичная оферта",
+            reply_markup=kb.back_to_main_menu_keyboard()
+        )
+        await callback.message.delete()
     except FileNotFoundError:
         await callback.message.edit_text(
             get_text('offer_unavailable'),
