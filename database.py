@@ -5,6 +5,34 @@ from datetime import datetime, timedelta
 from typing import Tuple, Optional, List
 from config import SUPER_ADMIN_ID
 
+async def cleanup_old_pending_payments():
+    """Удаляет из pending_payments счета, созданные более 24 часов назад."""
+    db = sq.connect('users.db')
+    cur = db.cursor()
+    
+    # Добавляем в таблицу столбец для времени создания, если его нет
+    try:
+        cur.execute("ALTER TABLE pending_payments ADD COLUMN created_at TEXT")
+    except sq.OperationalError:
+        # Столбец уже существует, ничего не делаем
+        pass
+
+    # Устанавливаем текущее время для записей, где оно отсутствует
+    cur.execute("UPDATE pending_payments SET created_at = ? WHERE created_at IS NULL", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
+    
+    # Вычисляем время 24 часа назад
+    cleanup_time_threshold = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Удаляем старые записи
+    cur.execute("DELETE FROM pending_payments WHERE created_at < ?", (cleanup_time_threshold,))
+    
+    deleted_rows = cur.rowcount
+    if deleted_rows > 0:
+        print(f"Автоматическая очистка: удалено {deleted_rows} старых записей из pending_payments.")
+        
+    db.commit()
+    db.close()
+
 async def db_start():
     """
     Инициализирует базу данных и создает таблицы, если они не существуют.
@@ -28,11 +56,52 @@ async def db_start():
         )
     """)
     
+    # Добавлен столбец created_at для отслеживания времени создания счета
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pending_payments (
+            invoice_id INTEGER PRIMARY KEY,
+            user_id INTEGER,
+            tariff TEXT,
+            amount INTEGER,
+            created_at TEXT 
+        )
+    """)
+    
     cur.execute("SELECT 1 FROM admins")
     if cur.fetchone() is None:
         cur.execute("INSERT INTO admins (user_id) VALUES (?)", (SUPER_ADMIN_ID,))
         print(f"Super admin with ID {SUPER_ADMIN_ID} added to the database.")
 
+    db.commit()
+    db.close()
+
+async def add_pending_payment(invoice_id: int, user_id: int, tariff: str, amount: int):
+    """Добавляет информацию о новом счете в базу данных."""
+    db = sq.connect('users.db')
+    cur = db.cursor()
+    # Записываем время создания счета
+    creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute(
+        "INSERT INTO pending_payments (invoice_id, user_id, tariff, amount, created_at) VALUES (?, ?, ?, ?, ?)",
+        (invoice_id, user_id, tariff, amount, creation_time)
+    )
+    db.commit()
+    db.close()
+
+async def get_pending_payment(invoice_id: int) -> Optional[tuple]:
+    """Получает информацию о счете из базы данных."""
+    db = sq.connect('users.db')
+    cur = db.cursor()
+    cur.execute("SELECT user_id, tariff, amount FROM pending_payments WHERE invoice_id = ?", (invoice_id,))
+    payment_data = cur.fetchone()
+    db.close()
+    return payment_data
+
+async def remove_pending_payment(invoice_id: int):
+    """Удаляет информацию о счете после успешной оплаты."""
+    db = sq.connect('users.db')
+    cur = db.cursor()
+    cur.execute("DELETE FROM pending_payments WHERE invoice_id = ?", (invoice_id,))
     db.commit()
     db.close()
 
@@ -48,7 +117,6 @@ async def add_user(user_id, username):
     db.commit()
     db.close()
 
-# ДОБАВЛЕНО: Новая функция для поиска пользователя по логину
 async def get_user_by_username(username: str) -> Optional[tuple]:
     """Находит пользователя в таблице users по его username."""
     db = sq.connect('users.db')
@@ -69,7 +137,7 @@ async def set_subscription(user_id: int, days: int):
 
 async def check_subscription(user_id: int) -> Tuple[bool, Optional[str]]:
     if await is_admin_db(user_id):
-        return True, (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
+        return True, "admin"
 
     db = sq.connect('users.db')
     cur = db.cursor()
@@ -140,8 +208,6 @@ async def get_subscribed_users() -> List[tuple]:
     users = cur.fetchall()
     db.close()
     return users
-
-# --- Функции для управления администраторами ---
 
 async def is_admin_db(user_id: int) -> bool:
     db = sq.connect('users.db')
