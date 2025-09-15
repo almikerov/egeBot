@@ -103,7 +103,7 @@ async def show_info_menu(callback: CallbackQuery):
 @router.callback_query(F.data == "show_offer")
 async def show_offer_text(callback: CallbackQuery):
     try:
-        offer_document = FSInputFile("offer.docx") 
+        offer_document = FSInputFile("offer.docx")
         await callback.message.delete()
         await callback.message.answer_document(
             offer_document,
@@ -152,7 +152,7 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
         return
 
     await callback.answer("⏳ Проверяем статус платежа...")
-    
+
     is_paid = await robokassa_api.check_payment(invoice_id)
 
     if is_paid:
@@ -274,7 +274,9 @@ async def admin_view_prompt(callback: CallbackQuery):
 
 @router.callback_query(F.data == "admin_edit_prompt")
 async def admin_edit_prompt_start(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(get_text('admin_prompt_request'), reply_markup=kb.back_to_admin_menu_keyboard())
+    # ИСПРАВЛЕНО: Текст вставлен напрямую, чтобы избежать ошибки форматирования
+    text = "Пришлите новый текст промпта. Используйте {task_text} и {user_text} как переменные."
+    await callback.message.edit_text(text, reply_markup=kb.back_to_admin_menu_keyboard())
     await state.set_state(AdminState.waiting_for_new_prompt)
     await callback.answer()
 
@@ -354,7 +356,7 @@ async def add_admin_finish(message: Message, state: FSMContext):
     if not message.text.isdigit():
         await message.answer("ID пользователя должен быть числом. Попробуйте снова.")
         return
-    
+
     admin_id = int(message.text)
     await db.add_admin(admin_id)
     await state.clear()
@@ -397,6 +399,6 @@ async def view_subscribed_users(callback: CallbackQuery):
             if username and username != 'None':
                  text += f"  <b>Username:</b> @{username}\n"
             text += f"  <b>До:</b> {end_date}\n\n"
-    
+
     await callback.message.edit_text(text, parse_mode='HTML', reply_markup=kb.back_to_admin_menu_keyboard())
     await callback.answer()
