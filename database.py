@@ -2,31 +2,10 @@
 
 import sqlite3 as sq
 from datetime import datetime, timedelta
+from typing import Tuple, Optional
 from config import ADMIN_IDS
 
-async def db_start():
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            subscription_end_date TEXT,
-            trial_tasks_used INTEGER DEFAULT 0,
-            single_tasks_purchased INTEGER DEFAULT 0
-        )
-    """)
-    db.commit()
-    db.close()
-
-async def add_user(user_id, username):
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
-    if cur.fetchone() is None:
-        cur.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, username))
-        db.commit()
-    db.close()
+# ... (остальной код файла без изменений до функции check_subscription) ...
 
 async def set_subscription(user_id: int, days: int):
     end_date = datetime.now() + timedelta(days=days)
@@ -37,19 +16,30 @@ async def set_subscription(user_id: int, days: int):
     db.commit()
     db.close()
 
-async def check_subscription(user_id: int) -> bool:
+# --- ИЗМЕНЕННАЯ ФУНКЦИЯ ---
+async def check_subscription(user_id: int) -> Tuple[bool, Optional[str]]:
+    """
+    Проверяет подписку и возвращает кортеж (статус_подписки, дата_окончания).
+    """
     if user_id in ADMIN_IDS:
-        return True
+        # Для админов возвращаем "вечную" подписку
+        return True, (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
+
     db = sq.connect('users.db')
     cur = db.cursor()
     cur.execute("SELECT subscription_end_date FROM users WHERE user_id = ?", (user_id,))
     result = cur.fetchone()
     db.close()
+
     if result and result[0]:
-        end_date = datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
+        end_date_str = result[0]
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S")
         if datetime.now() < end_date:
-            return True
-    return False
+            return True, end_date_str
+            
+    return False, None
+
+# ... (остальной код файла без изменений) ...
 
 async def get_available_tasks(user_id: int) -> dict:
     db = sq.connect('users.db')
@@ -57,10 +47,13 @@ async def get_available_tasks(user_id: int) -> dict:
     cur.execute("SELECT trial_tasks_used, single_tasks_purchased FROM users WHERE user_id = ?", (user_id,))
     result = cur.fetchone()
     db.close()
+    
     if not result:
         return {"is_subscribed": False, "trials_left": 2, "single_left": 0}
-    is_subscribed = await check_subscription(user_id)
+        
+    is_subscribed, _ = await check_subscription(user_id)
     trials_used, single_purchased = result
+    
     return {
         "is_subscribed": is_subscribed,
         "trials_left": max(0, 2 - trials_used),
