@@ -95,20 +95,20 @@ async def use_task(user_id: int):
     """
     Отмечает, что пользователь использовал одно задание (пробное или купленное).
     """
+    is_subscribed, _ = await check_subscription(user_id)
+    # Если есть подписка, ничего не списываем, просто выходим
+    if is_subscribed:
+        return
+
     db = sq.connect('users.db')
     cur = db.cursor()
     cur.execute("SELECT trial_tasks_used, single_tasks_purchased FROM users WHERE user_id = ?", (user_id,))
     result = cur.fetchone()
-    if not result: return
-
-    trials_used, single_purchased = result
-    
-    is_subscribed, _ = await check_subscription(user_id)
-    if is_subscribed:
-        # Если есть подписка, ничего не списываем
+    if not result:
         db.close()
         return
 
+    trials_used, single_purchased = result
     if trials_used < 2:
         cur.execute("UPDATE users SET trial_tasks_used = trial_tasks_used + 1 WHERE user_id = ?", (user_id,))
     elif single_purchased > 0:

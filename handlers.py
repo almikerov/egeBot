@@ -9,8 +9,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
 from datetime import datetime
 
-
-# Импортируем наши новые клавиатуры
 import keyboards as kb
 import database as db
 import ai_processing
@@ -36,7 +34,6 @@ async def get_user_status_text(user_id: int) -> str:
     """Возвращает текстовое описание статуса пользователя."""
     is_subscribed, end_date = await db.check_subscription(user_id)
     if is_subscribed:
-        # Форматируем дату в DD.MM.YYYY
         formatted_date = datetime.strptime(end_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
         return get_text('status_subscribed', end_date=formatted_date)
 
@@ -98,7 +95,6 @@ async def show_offer_text(callback: CallbackQuery):
         )
     await callback.answer()
 
-
 # --- Раздел "Подписка и оплата" ---
 
 @router.callback_query(F.data == "show_subscribe_options")
@@ -121,7 +117,6 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     payment_link = robokassa_api.generate_payment_link(user_id, amount, invoice_id)
     await state.update_data(invoice_id=invoice_id, tariff=tariff)
 
-    # Клавиатура для оплаты
     payment_kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text=f"💳 Оплатить {amount} RUB", url=payment_link)],
         [types.InlineKeyboardButton(text="✅ Я оплатил, проверить", callback_data="check_robokassa_payment")],
@@ -135,9 +130,12 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
 async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     invoice_id, tariff = user_data.get('invoice_id'), user_data.get('tariff')
-    if not all([invoice_id, tariff]): return await callback.answer("Сначала выберите тариф.", show_alert=True)
+    if not all([invoice_id, tariff]):
+        await callback.answer("Ошибка: не удалось найти счет. Пожалуйста, выберите тариф заново.", show_alert=True)
+        return
 
-    await callback.answer(get_text('payment_check_started'))
+    await callback.message.edit_text("⏳ Проверяем статус платежа...")
+    
     is_paid = await robokassa_api.check_payment(invoice_id)
 
     if is_paid:
@@ -156,7 +154,15 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
             )
         await state.clear()
     else:
-        await callback.answer(get_text('payment_failed'), show_alert=True)
+        failed_kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="Попробовать еще раз", callback_data="check_robokassa_payment")],
+            [types.InlineKeyboardButton(text="⬅️ Выбрать другой тариф", callback_data="show_subscribe_options")]
+        ])
+        await callback.message.edit_text(
+            get_text('payment_failed'),
+            reply_markup=failed_kb
+        )
+    await callback.answer()
 
 # --- Основная логика получения и проверки заданий ---
 
@@ -169,7 +175,6 @@ async def get_task_handler(callback: CallbackQuery, state: FSMContext):
     if is_subscribed or tasks_info["trials_left"] > 0 or tasks_info["single_left"] > 0:
         await give_task(callback, state, tasks_info)
     else:
-        # Если заданий нет, отправляем сообщение и клавиатуру с подпиской
         await callback.message.edit_text(
             get_text('no_tasks_left'),
             reply_markup=kb.subscribe_menu_keyboard()
@@ -177,7 +182,7 @@ async def get_task_handler(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 async def give_task(callback: CallbackQuery, state: FSMContext, tasks_info: dict):
-    await db.use_task(callback.from_user.id) # Используем задание
+    await db.use_task(callback.from_user.id)
     task = random.choice(EGE_TASKS)
     await state.update_data(current_task=task)
     await state.set_state(UserState.waiting_for_voice)
@@ -188,14 +193,14 @@ async def give_task(callback: CallbackQuery, state: FSMContext, tasks_info: dict
     if is_subscribed:
          message_text = get_text('get_task_subscribed', task=task)
     else:
+        # Получаем актуальное количество попыток ПОСЛЕ списания
+        updated_tasks_info = await db.get_available_tasks(callback.from_user.id)
         if tasks_info["trials_left"] > 0:
-            message_text = get_text('get_task_trial', trials_left=tasks_info['trials_left'] -1, task=task)
+            message_text = get_text('get_task_trial', trials_left=updated_tasks_info['trials_left'], task=task)
         else:
-            message_text = get_text('get_task_single', single_left=tasks_info['single_left'] - 1, task=task)
+            message_text = get_text('get_task_single', single_left=updated_tasks_info['single_left'], task=task)
 
-    # Используем edit_text, чтобы сообщение с заданием заменило меню
     await callback.message.edit_text(message_text, parse_mode="HTML")
-
 
 @router.message(UserState.waiting_for_voice, F.voice)
 async def voice_message_handler(message: Message, state: FSMContext):
@@ -216,14 +221,13 @@ async def voice_message_handler(message: Message, state: FSMContext):
     await message.answer(
         f"📝 <b>Ваш разбор ответа:</b>\n\n{review}",
         parse_mode="HTML",
-        reply_markup=kb.main_menu_keyboard() # Возвращаем в главное меню
+        reply_markup=kb.main_menu_keyboard()
     )
     await state.clear()
 
 @router.message(UserState.waiting_for_voice)
 async def incorrect_message_handler(message: Message):
     await message.answer(get_text('voice_error'))
-
 
 # --- Админ-панель (без изменений) ---
 
@@ -252,7 +256,3 @@ async def admin_edit_prompt_finish(message: Message, state: FSMContext):
     except Exception as e:
         await message.answer(get_text('admin_prompt_fail', e=e))
     await state.clear()
-
-# --- Удаляем старые, ненужные команды ---
-# Команды /offer и /subscribe теперь не нужны, так как они встроены в меню.
-# Я не буду добавлять их обработчики.
