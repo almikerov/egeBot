@@ -3,7 +3,7 @@
 import time
 import contextlib
 import os
-import re # <-- Добавляем импорт для экранирования
+import re # Импортируем для экранирования
 from aiogram import F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
@@ -33,9 +33,10 @@ class AdminState(StatesGroup):
     waiting_for_admin_id_to_add = State()
     waiting_for_admin_id_to_remove = State()
 
-# --- НОВАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ---
+# --- УЛУЧШЕННАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ---
 def escape_markdown(text: str) -> str:
     """Экранирует специальные символы для MarkdownV2."""
+    # Список всех зарезервированных символов в MarkdownV2
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
@@ -97,7 +98,7 @@ async def show_info_menu(callback: CallbackQuery):
     await callback.message.edit_text(
         get_text('info_text', status_text=status_text),
         reply_markup=kb.info_menu_keyboard(),
-        parse_mode="HTML"
+        parse_mode="HTML" # Оставляем HTML для этого раздела, т.к. в нем могут быть ссылки
     )
     await callback.answer()
 
@@ -150,12 +151,12 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
     state_data = await state.get_data()
     invoice_id = state_data.get('invoice_id')
     if not invoice_id:
-        await callback.answer("Ошибка: сессия проверки истекла. Пожалуйста, выберите тариф заново.", show_alert=True)
+        await callback.answer("Ошибка: сессия проверки истекла.", show_alert=True)
         await show_subscribe_menu(callback, state)
         return
     payment_data = await db.get_pending_payment(invoice_id)
     if not payment_data:
-        await callback.answer("Ошибка: не удалось найти счет. Пожалуйста, выберите тариф заново.", show_alert=True)
+        await callback.answer("Ошибка: не удалось найти счет.", show_alert=True)
         await show_subscribe_menu(callback, state)
         return
     user_id, tariff, _ = payment_data
@@ -198,7 +199,7 @@ async def get_task_handler(callback: CallbackQuery, state: FSMContext):
         return
     sheet_titles = await gs.get_sheet_titles()
     if not sheet_titles:
-        await callback.answer("Не удалось загрузить типы заданий. Попробуйте позже.", show_alert=True)
+        await callback.answer("Не удалось загрузить типы заданий.", show_alert=True)
         return
     await callback.message.edit_text(
         "Выберите тип задания:",
@@ -209,28 +210,27 @@ async def get_task_handler(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("select_task_"))
 async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext):
     sheet_title = callback.data[len("select_task_"):]
-    await callback.message.edit_text("🔄 Загружаю ваше задание, пожалуйста, подождите...")
+    await callback.message.edit_text("🔄 Загружаю ваше задание...")
     prompt, task_data = await gs.get_task_from_sheet(sheet_title)
     if not prompt or not task_data:
-        await callback.message.edit_text("Не удалось загрузить задание. Возможно, лист пуст. Попробуйте другой.", reply_markup=kb.back_to_main_menu_keyboard())
+        await callback.message.edit_text("Не удалось загрузить задание с этого листа.", reply_markup=kb.back_to_main_menu_keyboard())
         await callback.answer()
         return
     await db.use_task(callback.from_user.id)
     
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # Экранируем текст задания и ID перед вставкой в f-строку
-    safe_task_text = escape_markdown(task_data['task_text'])
-    safe_task_id = escape_markdown(task_data['id'])
-    
     await state.update_data(
-        # Сохраняем оригинальный, неэкранированный текст для Gemini
         current_task_text=task_data['task_text'], 
         current_prompt=prompt
     )
     await state.set_state(UserState.waiting_for_voice)
 
+    # Экранируем все динамические части текста
+    safe_task_text = escape_markdown(task_data['task_text'])
+    safe_task_id = escape_markdown(task_data['id'])
+    
     task_id_text = f"_(ID на ФИПИ: {safe_task_id})_"
-    full_task_text = f"**Ваше задание:**\n\n{safe_task_text}\n{task_id_text}\n\n_Запишите и отправьте свой ответ в виде голосового сообщения\._" # <-- Экранируем точку в конце
+    instruction_text = "_Запишите и отправьте свой ответ в виде голосового сообщения\._"
+    full_task_text = f"**Ваше задание:**\n\n{safe_task_text}\n\n{task_id_text}\n\n{instruction_text}"
 
     if task_data.get('image1'):
         try:
@@ -256,12 +256,18 @@ async def voice_message_handler(message: Message, state: FSMContext):
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
         
-        # Экранируем ответ от Gemini перед отправкой
-        safe_review = escape_markdown(review)
+        # Важно: сам review от Gemini экранировать не нужно, т.к. он уже содержит Markdown
         
         await message.answer(
-            f"📝 **Ваш разбор ответа:**\n\n{safe_review}",
+            f"📝 **Ваш разбор ответа:**\n\n{review}",
             parse_mode="MarkdownV2",
+            reply_markup=kb.main_menu_keyboard()
+        )
+    except TelegramBadRequest as e:
+        # Если Gemini вернул невалидный Markdown, отправляем как простой текст
+        print(f"Ошибка Markdown в ответе Gemini: {e}. Отправка простого текста.")
+        await message.answer(
+            f"📝 Ваш разбор ответа:\n\n{review}",
             reply_markup=kb.main_menu_keyboard()
         )
     finally:
@@ -361,10 +367,10 @@ async def add_admin_finish(message: Message, state: FSMContext):
         if user_data:
             admin_id = user_data[0]
         else:
-            await message.answer(f"Пользователь @{username} не найден. Попросите его запустить бота.")
+            await message.answer(f"Пользователь @{username} не найден.")
             return
     else:
-        await message.answer("Неверный формат. Пришлите ID (цифры) или @username.")
+        await message.answer("Неверный формат. Пришлите ID или @username.")
         return
     if admin_id:
         await db.add_admin(admin_id)
@@ -405,7 +411,8 @@ async def view_subscribed_users(callback: CallbackQuery):
                 display_name = escape_markdown(chat.full_name or chat.username or f"User {user_id}")
             except Exception:
                 display_name = escape_markdown(username or f"User {user_id}")
+            safe_end_date = escape_markdown(end_date)
             text += f"• [{display_name}](tg://user?id={user_id}) (`{user_id}`)\n"
-            text += f"  **Подписка до:** {escape_markdown(end_date)}\n\n"
+            text += f"  **Подписка до:** {safe_end_date}\n\n"
     await callback.message.edit_text(text, parse_mode='MarkdownV2', reply_markup=kb.back_to_admin_menu_keyboard())
     await callback.answer()
