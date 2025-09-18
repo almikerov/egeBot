@@ -39,7 +39,7 @@ def escape_markdown(text: str) -> str:
     if not isinstance(text, str):
         return ''
     # РАСШИРЕННЫЙ СПИСОК СИМВОЛОВ ДЛЯ ЭКРАНИРОВАНИЯ
-    escape_chars = r'[]()`>#+-={}.!№'
+    escape_chars = r'[]()`>#+-={}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 def clean_ai_response(text: str) -> str:
