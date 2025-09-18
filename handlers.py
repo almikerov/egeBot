@@ -273,14 +273,15 @@ async def voice_message_handler(message: Message, state: FSMContext):
         
         # Очищаем и экранируем ответ от AI перед отправкой
         cleaned_review = clean_ai_response(review)
+        escaped_review = escape_markdown(cleaned_review) # <-- ДОБАВЛЕНА ЭТА СТРОКА
         
         # Для отладки: посмотрим, что получилось после очистки
-        print("--- AI Response (Cleaned) ---")
-        print(cleaned_review)
+        print("--- AI Response (Escaped) ---")
+        print(escaped_review)
         print("-----------------------------")
         
         await message.answer(
-            f"📝 *Ваш разбор ответа:*\n\n{cleaned_review}",
+            f"📝 *Ваш разбор ответа:*\n\n{escaped_review}", # <-- ИСПОЛЬЗУЕМ НОВУЮ ПЕРЕМЕННУЮ
             parse_mode="MarkdownV2",
             reply_markup=kb.main_menu_keyboard()
         )
