@@ -233,22 +233,22 @@ async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext)
     )
     await state.set_state(UserState.waiting_for_voice)
 
-    task_id_text = f"<i>(ID на ФИПИ: {task_data['id']})</i>"
-    full_task_text = f"<b>Ваше задание:</b>\n\n<blockquote>{task_data['task_text']}</blockquote>\n{task_id_text}\n\n<i>Запишите и отправьте свой ответ в виде голосового сообщения.</i>"
+    task_id_text = f"_(ID на ФИПИ: {task_data['id']})_"
+    full_task_text = f"**Ваше задание:**\n\n{task_data['task_text']}\n{task_id_text}\n\n_Запишите и отправьте свой ответ в виде голосового сообщения._"
 
     if task_data.get('image1'):
         try:
+            # При отправке фото caption не может быть длиннее 1024 символов
+            # Поэтому отправляем фото и текст раздельно
             await callback.message.delete()
-            await callback.message.answer_photo(
-                photo=task_data['image1'],
-                caption=full_task_text,
-                parse_mode="HTML"
-            )
+            await callback.message.answer_photo(photo=task_data['image1'])
+            await callback.message.answer(full_task_text, parse_mode="MarkdownV2")
+
         except TelegramBadRequest as e:
             print(f"Ошибка отправки фото: {e}. Отправляю текст.")
-            await callback.message.answer(full_task_text, parse_mode="HTML")
+            await callback.message.answer(full_task_text, parse_mode="MarkdownV2")
     else:
-        await callback.message.edit_text(full_task_text, parse_mode="HTML")
+        await callback.message.edit_text(full_task_text, parse_mode="MarkdownV2")
     await callback.answer()
 
 @router.message(UserState.waiting_for_voice, F.voice)
@@ -268,8 +268,8 @@ async def voice_message_handler(message: Message, state: FSMContext):
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
         
         await message.answer(
-            f"📝 <b>Ваш разбор ответа:</b>\n\n{review}",
-            parse_mode="HTML",
+            f"📝 **Ваш разбор ответа:**\n\n{review}",
+            parse_mode="MarkdownV2",
             reply_markup=kb.main_menu_keyboard()
         )
     finally:
@@ -342,21 +342,21 @@ async def admin_management_menu(callback: CallbackQuery):
 @router.callback_query(F.data == "admin_view_admins")
 async def view_admins(callback: CallbackQuery):
     admins_ids = await db.get_admins()
-    text_lines = ["<b>Список администраторов:</b>"]
+    text_lines = ["**Список администраторов:**"]
     
     for admin_id in admins_ids:
         try:
             chat = await callback.bot.get_chat(admin_id)
             display_name = chat.full_name or chat.username or f"User {admin_id}"
-            line = f'• <a href="tg://user?id={admin_id}">{display_name}</a> (<code>{admin_id}</code>)'
+            line = f"• [{display_name}](tg://user?id={admin_id}) (`{admin_id}`)"
         except Exception:
-            line = f'• <a href="tg://user?id={admin_id}">User {admin_id}</a> (ID не найден)'
+            line = f"• [User {admin_id}](tg://user?id={admin_id}) (ID не найден)"
             
         if admin_id == SUPER_ADMIN_ID:
             line += " (⭐ Супер-админ)"
         text_lines.append(line)
         
-    await callback.message.edit_text("\n".join(text_lines), parse_mode="HTML", reply_markup=kb.back_to_admins_menu_keyboard())
+    await callback.message.edit_text("\n".join(text_lines), parse_mode="MarkdownV2", reply_markup=kb.back_to_admins_menu_keyboard())
     await callback.answer()
 
 @router.callback_query(F.data == "admin_add_admin")
@@ -418,7 +418,7 @@ async def view_subscribed_users(callback: CallbackQuery):
     if not users:
         text = "Нет пользователей с активной подпиской."
     else:
-        text = "<b>Пользователи с активной подпиской:</b>\n\n"
+        text = "**Пользователи с активной подпиской:**\n\n"
         for user_id, username, end_date_str in users:
             end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
             try:
@@ -427,8 +427,8 @@ async def view_subscribed_users(callback: CallbackQuery):
             except Exception:
                 display_name = username or f"User {user_id}"
 
-            text += f'• <a href="tg://user?id={user_id}">{display_name}</a> (<code>{user_id}</code>)\n'
-            text += f"  <b>Подписка до:</b> {end_date}\n\n"
+            text += f"• [{display_name}](tg://user?id={user_id}) (`{user_id}`)\n"
+            text += f"  **Подписка до:** {end_date}\n\n"
     
-    await callback.message.edit_text(text, parse_mode='HTML', reply_markup=kb.back_to_admin_menu_keyboard())
+    await callback.message.edit_text(text, parse_mode='MarkdownV2', reply_markup=kb.back_to_admin_menu_keyboard())
     await callback.answer()
