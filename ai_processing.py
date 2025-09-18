@@ -15,20 +15,32 @@ async def get_ai_review(prompt_template: str, task_text: str, audio_file_path: s
         try:
             genai.configure(api_key=api_key)
             
-            # Шаг 1: Загружаем аудиофайл в Gemini
+            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+            # Используем стандартную функцию upload_file внутри run_in_executor,
+            # чтобы она выполнялась в отдельном потоке и не блокировала бота.
+            
             print(f"Загрузка файла {audio_file_path} в Google AI...")
-            audio_file = await genai.upload_file_async(path=audio_file_path)
+            loop = asyncio.get_running_loop()
+            
+            # genai.upload_file - это правильная функция для загрузки
+            audio_file = await loop.run_in_executor(
+                None, 
+                lambda: genai.upload_file(path=audio_file_path)
+            )
             print("Файл успешно загружен.")
+            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
-            # Шаг 2: Создаем модель и отправляем промпт вместе с аудиофайлом
             model = genai.GenerativeModel('gemini-1.5-flash')
             
             print(f"Попытка использовать API ключ, который заканчивается на ...{api_key[-4:]}")
             response = await model.generate_content_async([prompt, audio_file])
             print("Запрос к Gemini API с аудиофайлом успешен.")
 
-            # Шаг 3: Удаляем загруженный файл из хранилища Google
-            await genai.delete_file_async(name=audio_file.name)
+            # Удаление файла также делаем неблокирующим способом
+            await loop.run_in_executor(
+                None,
+                lambda: genai.delete_file(name=audio_file.name)
+            )
             print(f"Временный файл {audio_file.name} удален из Google AI.")
 
             return response.text
