@@ -38,9 +38,8 @@ def escape_markdown(text: str) -> str:
     """Экранирует специальные символы для MarkdownV2, которые НЕ являются частью форматирования."""
     if not isinstance(text, str):
         return ''
-    # Экранируем символы, которые могут сломать разметку.
-    # Мы не трогаем '*', '_', '~', '|' т.к. AI может их использовать для форматирования.
-    escape_chars = r'[]()`>#+-={}.!'
+    # РАСШИРЕННЫЙ СПИСОК СИМВОЛОВ ДЛЯ ЭКРАНИРОВАНИЯ
+    escape_chars = r'[]()`>#+-={}.!№'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 def clean_ai_response(text: str) -> str:
@@ -49,8 +48,7 @@ def clean_ai_response(text: str) -> str:
     """
     if not isinstance(text, str):
         return ''
-    # 1. Заменяем **bold** на *bold*
-    # Используем регулярное выражение для более точной замены
+    # Заменяем **bold** на *bold*
     cleaned_text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
     return cleaned_text
 
@@ -76,25 +74,29 @@ async def get_user_status_text(user_id: int) -> str:
     else:
         return get_text('status_no_tasks')
 
-# --- Обработчики основного меню и команд ---
-@router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
-    await state.clear()
-    await db.add_user(message.from_user.id, message.from_user.username)
-    status_text = await get_user_status_text(message.from_user.id)
+async def send_main_menu(message: types.Message, user_id: int):
+    """Отправляет новое сообщение с главным меню."""
+    status_text = await get_user_status_text(user_id)
     await message.answer(
         get_text('start', status_text=status_text),
         reply_markup=kb.main_menu_keyboard()
     )
 
+# --- Обработчики основного меню и команд ---
+@router.message(Command("start"))
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    await db.add_user(message.from_user.id, message.from_user.username)
+    await send_main_menu(message, message.from_user.id)
+
 @router.callback_query(F.data == "main_menu")
 async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    status_text = await get_user_status_text(callback.from_user.id)
-    text = get_text('start', status_text=status_text)
-    keyboard = kb.main_menu_keyboard()
+    # Удаляем старое меню
     with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.message.delete()
+    # Присылаем новое
+    await send_main_menu(callback.message, callback.from_user.id)
     await callback.answer()
 
 @router.message(Command("webapp"))
@@ -176,24 +178,29 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
     is_paid = await robokassa_api.check_payment(invoice_id)
+    
+    # Удаляем сообщение с кнопками оплаты в любом случае
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.delete()
+
     if is_paid:
         await state.clear()
         await db.remove_pending_payment(invoice_id)
         if tariff in ["week", "month"]:
             days = 7 if tariff == "week" else 30
             await db.set_subscription(user_id, days)
-            await callback.message.edit_text(
-                get_text('payment_success_subscription', days=days),
-                reply_markup=kb.main_menu_keyboard()
+            await callback.message.answer(
+                get_text('payment_success_subscription', days=days)
             )
         elif tariff == "single":
             await db.add_single_tasks(user_id, 1)
-            await callback.message.edit_text(
-                get_text('payment_success_single'),
-                reply_markup=kb.main_menu_keyboard()
+            await callback.message.answer(
+                get_text('payment_success_single')
             )
+        await send_main_menu(callback.message, user_id)
     else:
-        await callback.message.edit_text(
+        # Отправляем новое сообщение о неудаче, а не редактируем старое
+        await callback.message.answer(
             get_text('payment_failed'),
             reply_markup=kb.payment_failed_keyboard()
         )
@@ -238,10 +245,8 @@ async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext)
     )
     await state.set_state(UserState.waiting_for_voice)
     
-    # --- ИСПРАВЛЕНИЕ 1: Добавлена очистка текста задания ---
     cleaned_task_text = clean_ai_response(task_data['task_text'])
     escaped_text = escape_markdown(cleaned_task_text)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ 1 ---
     
     quoted_task_text = "\n".join([f"> {line}" for line in escaped_text.split('\n')])
     
@@ -267,6 +272,7 @@ async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext)
 async def voice_message_handler(message: Message, state: FSMContext):
     await message.answer(get_text('voice_accepted'))
     voice_ogg_path = f"voice_{message.from_user.id}.ogg"
+    review = "" # Инициализируем переменную
     try:
         voice_file_info = await message.bot.get_file(message.voice.file_id)
         await message.bot.download_file(voice_file_info.file_path, voice_ogg_path)
@@ -275,29 +281,33 @@ async def voice_message_handler(message: Message, state: FSMContext):
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
         
-        # --- ИСПРАВЛЕНИЕ 2: Полная обработка ответа от AI ---
+        # --- Полная обработка ответа от AI ---
         cleaned_review = clean_ai_response(review)
         escaped_review = escape_markdown(cleaned_review)
         
-        print("--- AI Response (Fully Processed) ---")
-        print(escaped_review)
-        print("-------------------------------------")
-        
+        # --- ИЗМЕНЕНИЕ ЛОГИКИ: ОТПРАВКА ДВУХ СООБЩЕНИЙ ---
+        # 1. Отправляем анализ без клавиатуры
         await message.answer(
             f"📝 *Ваш разбор ответа:*\n\n{escaped_review}",
-            parse_mode="MarkdownV2",
-            reply_markup=kb.main_menu_keyboard()
+            parse_mode="MarkdownV2"
         )
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ 2 ---
+        
+        # 2. Отдельным сообщением присылаем главное меню
+        await send_main_menu(message, message.from_user.id)
+        
     except TelegramBadRequest as e:
         print(f"ОШИБКА: Не удалось отправить отформатированный ответ Gemini: {e}.")
         print("--- AI Response (Raw, Caused Error) ---")
-        print(review)
+        print(review) # Печатаем "сырой" ответ, вызвавший ошибку
         print("---------------------------------------")
+        
+        # 1. Отправляем сообщение об ошибке
         await message.answer(
-            f"📝 Ваш разбор ответа (ошибка форматирования):\n\n{review}", # Отправляем "грязный" ответ как есть
-            reply_markup=kb.main_menu_keyboard()
+            f"📝 Ваш разбор ответа (ошибка форматирования):\n\n{review}"
         )
+        # 2. Все равно присылаем главное меню
+        await send_main_menu(message, message.from_user.id)
+        
     finally:
         await state.clear()
         if os.path.exists(voice_ogg_path):
