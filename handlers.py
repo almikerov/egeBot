@@ -238,7 +238,11 @@ async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext)
     )
     await state.set_state(UserState.waiting_for_voice)
     
-    escaped_text = escape_markdown(task_data['task_text'])
+    # --- ИСПРАВЛЕНИЕ 1: Добавлена очистка текста задания ---
+    cleaned_task_text = clean_ai_response(task_data['task_text'])
+    escaped_text = escape_markdown(cleaned_task_text)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ 1 ---
+    
     quoted_task_text = "\n".join([f"> {line}" for line in escaped_text.split('\n')])
     
     safe_task_id = escape_markdown(task_data['id'])
@@ -271,20 +275,20 @@ async def voice_message_handler(message: Message, state: FSMContext):
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
         
-        # Очищаем и экранируем ответ от AI перед отправкой
+        # --- ИСПРАВЛЕНИЕ 2: Полная обработка ответа от AI ---
         cleaned_review = clean_ai_response(review)
-        escaped_review = escape_markdown(cleaned_review) # <-- ДОБАВЛЕНА ЭТА СТРОКА
+        escaped_review = escape_markdown(cleaned_review)
         
-        # Для отладки: посмотрим, что получилось после очистки
-        print("--- AI Response (Escaped) ---")
+        print("--- AI Response (Fully Processed) ---")
         print(escaped_review)
-        print("-----------------------------")
+        print("-------------------------------------")
         
         await message.answer(
-            f"📝 *Ваш разбор ответа:*\n\n{escaped_review}", # <-- ИСПОЛЬЗУЕМ НОВУЮ ПЕРЕМЕННУЮ
+            f"📝 *Ваш разбор ответа:*\n\n{escaped_review}",
             parse_mode="MarkdownV2",
             reply_markup=kb.main_menu_keyboard()
         )
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ 2 ---
     except TelegramBadRequest as e:
         print(f"ОШИБКА: Не удалось отправить отформатированный ответ Gemini: {e}.")
         print("--- AI Response (Raw, Caused Error) ---")
