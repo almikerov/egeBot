@@ -38,17 +38,20 @@ def escape_markdown(text: str) -> str:
     """Экранирует специальные символы для MarkdownV2, которые НЕ являются частью форматирования."""
     if not isinstance(text, str):
         return ''
-    # Экранируем только те символы, которые могут сломать разметку, если они не часть ее
-    escape_chars = r'[]()~`>#+-=|{}.!' # Убраны '*' и '_'
+    # Экранируем символы, которые могут сломать разметку.
+    # Мы не трогаем '*', '_', '~', '|' т.к. AI может их использовать для форматирования.
+    escape_chars = r'[]()`>#+-={}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 def clean_ai_response(text: str) -> str:
-    """Очищает ответ AI от распространенных ошибок, ломающих MarkdownV2."""
+    """
+    Преобразует стандартный Markdown от AI в совместимый с Telegram MarkdownV2.
+    """
     if not isinstance(text, str):
         return ''
-    # Заменяет двойные звездочки на одинарные, как требует MarkdownV2 для жирного текста
-    # Это основная причина, почему вы видите **текст** вместо жирного
-    cleaned_text = text.replace('**', '*')
+    # 1. Заменяем **bold** на *bold*
+    # Используем регулярное выражение для более точной замены
+    cleaned_text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
     return cleaned_text
 
 
@@ -235,7 +238,6 @@ async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext)
     )
     await state.set_state(UserState.waiting_for_voice)
     
-    # Экранируем текст из таблицы и добавляем > для цитаты
     escaped_text = escape_markdown(task_data['task_text'])
     quoted_task_text = "\n".join([f"> {line}" for line in escaped_text.split('\n')])
     
@@ -269,8 +271,13 @@ async def voice_message_handler(message: Message, state: FSMContext):
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
         
-        # Очищаем ответ от AI перед отправкой
+        # Очищаем и экранируем ответ от AI перед отправкой
         cleaned_review = clean_ai_response(review)
+        
+        # Для отладки: посмотрим, что получилось после очистки
+        print("--- AI Response (Cleaned) ---")
+        print(cleaned_review)
+        print("-----------------------------")
         
         await message.answer(
             f"📝 *Ваш разбор ответа:*\n\n{cleaned_review}",
@@ -278,9 +285,12 @@ async def voice_message_handler(message: Message, state: FSMContext):
             reply_markup=kb.main_menu_keyboard()
         )
     except TelegramBadRequest as e:
-        print(f"Ошибка Markdown в ответе Gemini: {e}. Отправка простого текста.")
+        print(f"ОШИБКА: Не удалось отправить отформатированный ответ Gemini: {e}.")
+        print("--- AI Response (Raw, Caused Error) ---")
+        print(review)
+        print("---------------------------------------")
         await message.answer(
-            f"📝 Ваш разбор ответа:\n\n{review}", # Отправляем "грязный" ответ как есть
+            f"📝 Ваш разбор ответа (ошибка форматирования):\n\n{review}", # Отправляем "грязный" ответ как есть
             reply_markup=kb.main_menu_keyboard()
         )
     finally:
