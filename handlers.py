@@ -33,16 +33,25 @@ class AdminState(StatesGroup):
     waiting_for_admin_id_to_add = State()
     waiting_for_admin_id_to_remove = State()
 
-# --- УЛУЧШЕННАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ---
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def escape_markdown(text: str) -> str:
-    """Экранирует специальные символы для MarkdownV2."""
+    """Экранирует специальные символы для MarkdownV2, которые НЕ являются частью форматирования."""
     if not isinstance(text, str):
         return ''
-    # Список всех зарезервированных символов в MarkdownV2
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    # Экранируем только те символы, которые могут сломать разметку, если они не часть ее
+    escape_chars = r'[]()~`>#+-=|{}.!' # Убраны '*' и '_'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
-# --- Вспомогательные функции ---
+def clean_ai_response(text: str) -> str:
+    """Очищает ответ AI от распространенных ошибок, ломающих MarkdownV2."""
+    if not isinstance(text, str):
+        return ''
+    # Заменяет двойные звездочки на одинарные, как требует MarkdownV2 для жирного текста
+    # Это основная причина, почему вы видите **текст** вместо жирного
+    cleaned_text = text.replace('**', '*')
+    return cleaned_text
+
+
 async def is_admin(user_id: int) -> bool:
     admins = await db.get_admins()
     return user_id in admins
@@ -225,14 +234,16 @@ async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext)
         current_prompt=prompt
     )
     await state.set_state(UserState.waiting_for_voice)
-
-    safe_task_text = escape_markdown(task_data['task_text'])
-    safe_task_id = escape_markdown(task_data['id'])
     
-    # ИСПРАВЛЕНИЕ ЗДЕСЬ: Экранируем скобки в строке с ID
+    # Экранируем текст из таблицы и добавляем > для цитаты
+    escaped_text = escape_markdown(task_data['task_text'])
+    quoted_task_text = "\n".join([f"> {line}" for line in escaped_text.split('\n')])
+    
+    safe_task_id = escape_markdown(task_data['id'])
     task_id_text = f"_\\(ID на ФИПИ: {safe_task_id}\\)_"
     instruction_text = "_Запишите и отправьте свой ответ в виде голосового сообщения\\._"
-    full_task_text = f"**Ваше задание:**\n\n{safe_task_text}\n\n{task_id_text}\n\n{instruction_text}"
+    
+    full_task_text = f"*Ваше задание:*\n\n{quoted_task_text}\n\n{task_id_text}\n\n{instruction_text}"
 
     if task_data.get('image1'):
         try:
@@ -258,18 +269,18 @@ async def voice_message_handler(message: Message, state: FSMContext):
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
         
+        # Очищаем ответ от AI перед отправкой
+        cleaned_review = clean_ai_response(review)
+        
         await message.answer(
-            f"📝 **Ваш разбор ответа:**\n\n{review}",
+            f"📝 *Ваш разбор ответа:*\n\n{cleaned_review}",
             parse_mode="MarkdownV2",
             reply_markup=kb.main_menu_keyboard()
         )
     except TelegramBadRequest as e:
         print(f"Ошибка Markdown в ответе Gemini: {e}. Отправка простого текста.")
-        # Экранируем ответ Gemini, если он оказался невалидным Markdown
-        safe_review = escape_markdown(review)
         await message.answer(
-            f"📝 **Ваш разбор ответа:**\n\n{safe_review}",
-            parse_mode="MarkdownV2", # Повторная попытка с экранированием
+            f"📝 Ваш разбор ответа:\n\n{review}", # Отправляем "грязный" ответ как есть
             reply_markup=kb.main_menu_keyboard()
         )
     finally:
@@ -337,7 +348,7 @@ async def admin_management_menu(callback: CallbackQuery):
 @router.callback_query(F.data == "admin_view_admins")
 async def view_admins(callback: CallbackQuery):
     admins_ids = await db.get_admins()
-    text_lines = ["**Список администраторов:**"]
+    text_lines = ["*Список администраторов:*"]
     for admin_id in admins_ids:
         try:
             chat = await callback.bot.get_chat(admin_id)
@@ -405,7 +416,7 @@ async def view_subscribed_users(callback: CallbackQuery):
     if not users:
         text = "Нет пользователей с активной подпиской."
     else:
-        text = "**Пользователи с активной подпиской:**\n\n"
+        text = "*Пользователи с активной подпиской:*\n\n"
         for user_id, username, end_date_str in users:
             end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
             try:
@@ -415,6 +426,6 @@ async def view_subscribed_users(callback: CallbackQuery):
                 display_name = escape_markdown(username or f"User {user_id}")
             safe_end_date = escape_markdown(end_date)
             text += f"• [{display_name}](tg://user?id={user_id}) (`{user_id}`)\n"
-            text += f"  **Подписка до:** {safe_end_date}\n\n"
+            text += f"  *Подписка до:* {safe_end_date}\n\n"
     await callback.message.edit_text(text, parse_mode='MarkdownV2', reply_markup=kb.back_to_admin_menu_keyboard())
     await callback.answer()
