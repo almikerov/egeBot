@@ -36,6 +36,8 @@ class AdminState(StatesGroup):
 # --- УЛУЧШЕННАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ---
 def escape_markdown(text: str) -> str:
     """Экранирует специальные символы для MarkdownV2."""
+    if not isinstance(text, str):
+        return ''
     # Список всех зарезервированных символов в MarkdownV2
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
@@ -98,7 +100,7 @@ async def show_info_menu(callback: CallbackQuery):
     await callback.message.edit_text(
         get_text('info_text', status_text=status_text),
         reply_markup=kb.info_menu_keyboard(),
-        parse_mode="HTML" # Оставляем HTML для этого раздела, т.к. в нем могут быть ссылки
+        parse_mode="HTML"
     )
     await callback.answer()
 
@@ -224,12 +226,12 @@ async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext)
     )
     await state.set_state(UserState.waiting_for_voice)
 
-    # Экранируем все динамические части текста
     safe_task_text = escape_markdown(task_data['task_text'])
     safe_task_id = escape_markdown(task_data['id'])
     
-    task_id_text = f"_(ID на ФИПИ: {safe_task_id})_"
-    instruction_text = "_Запишите и отправьте свой ответ в виде голосового сообщения\._"
+    # ИСПРАВЛЕНИЕ ЗДЕСЬ: Экранируем скобки в строке с ID
+    task_id_text = f"_\\(ID на ФИПИ: {safe_task_id}\\)_"
+    instruction_text = "_Запишите и отправьте свой ответ в виде голосового сообщения\\._"
     full_task_text = f"**Ваше задание:**\n\n{safe_task_text}\n\n{task_id_text}\n\n{instruction_text}"
 
     if task_data.get('image1'):
@@ -256,18 +258,18 @@ async def voice_message_handler(message: Message, state: FSMContext):
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
         
-        # Важно: сам review от Gemini экранировать не нужно, т.к. он уже содержит Markdown
-        
         await message.answer(
             f"📝 **Ваш разбор ответа:**\n\n{review}",
             parse_mode="MarkdownV2",
             reply_markup=kb.main_menu_keyboard()
         )
     except TelegramBadRequest as e:
-        # Если Gemini вернул невалидный Markdown, отправляем как простой текст
         print(f"Ошибка Markdown в ответе Gemini: {e}. Отправка простого текста.")
+        # Экранируем ответ Gemini, если он оказался невалидным Markdown
+        safe_review = escape_markdown(review)
         await message.answer(
-            f"📝 Ваш разбор ответа:\n\n{review}",
+            f"📝 **Ваш разбор ответа:**\n\n{safe_review}",
+            parse_mode="MarkdownV2", # Повторная попытка с экранированием
             reply_markup=kb.main_menu_keyboard()
         )
     finally:
@@ -279,7 +281,7 @@ async def voice_message_handler(message: Message, state: FSMContext):
 async def incorrect_message_handler(message: Message):
     await message.answer(get_text('voice_error'))
 
-# --- Админ-панель ---
+# --- Админ-панель (далее без изменений) ---
 @router.message(Command(ADMIN_PASSWORD))
 async def admin_login(message: Message, state: FSMContext):
     if await is_admin(message.from_user.id):
