@@ -1,6 +1,6 @@
 # keyboards.py
 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from typing import List
 
 def main_menu_keyboard():
@@ -18,6 +18,15 @@ def task_type_keyboard(sheet_titles: List[str]):
         buttons.append([InlineKeyboardButton(text=title, callback_data=f"select_task_{title}")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def web_app_keyboard(url: str):
+    """Создает клавиатуру с одной кнопкой для запуска веб-приложения."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🚀 Открыть веб-приложение", 
+            web_app=WebAppInfo(url=url)
+        )]
+    ])
 
 def subscribe_menu_keyboard(prices: dict):
     """Возвращает клавиатуру для выбора тарифа подписки с актуальными ценами."""
@@ -58,7 +67,6 @@ def back_to_main_menu_keyboard():
     ])
 
 # --- Клавиатуры для админ-панели ---
-
 def admin_menu_keyboard():
     """Возвращает клавиатуру главного меню админ-панели."""
     return InlineKeyboardMarkup(inline_keyboard=[

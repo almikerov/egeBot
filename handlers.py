@@ -54,7 +54,7 @@ async def get_user_status_text(user_id: int) -> str:
     else:
         return get_text('status_no_tasks')
 
-# --- Обработчики основного меню ---
+# --- Обработчики основного меню и команд ---
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
@@ -74,6 +74,17 @@ async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
+
+# --- ОБРАБОТЧИК ДЛЯ WEB APP ---
+@router.message(Command("webapp"))
+async def cmd_webapp(message: Message):
+    # ВАЖНО: Замените на реальную HTTPS-ссылку на ваше веб-приложение
+    WEB_APP_URL = "https://almikerov.ru/ege-speaking-simulator/"
+
+    await message.answer(
+        "Нажмите кнопку ниже, чтобы запустить тренажер!",
+        reply_markup=kb.web_app_keyboard(WEB_APP_URL)
+    )
 
 # --- Раздел "Информация" ---
 @router.callback_query(F.data == "show_info")
@@ -129,7 +140,7 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     await state.set_state(UserState.waiting_for_payment_check)
 
     await callback.message.edit_text(
-        get_text('buy_prompt', tariff=tariff),
+        get_text('buy_prompt', tariff=tariff, amount=amount),
         reply_markup=kb.payment_keyboard(payment_link, amount)
     )
     await callback.answer()
@@ -177,7 +188,7 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
             reply_markup=kb.payment_failed_keyboard()
         )
 
-# --- НОВАЯ ЛОГИКА ПОЛУЧЕНИЯ ЗАДАНИЙ ---
+# --- ЛОГИКА ПОЛУЧЕНИЯ И ПРОВЕРКИ ЗАДАНИЙ ---
 @router.callback_query(F.data == "get_task")
 async def get_task_handler(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -250,16 +261,11 @@ async def voice_message_handler(message: Message, state: FSMContext):
         voice_file_info = await message.bot.get_file(message.voice.file_id)
         await message.bot.download_file(voice_file_info.file_path, voice_ogg_path)
         
-        recognized_text = await ai_processing.recognize_speech(voice_ogg_path)
-        if "Ошибка:" in recognized_text:
-            await message.answer(recognized_text, reply_markup=kb.main_menu_keyboard())
-            return
-
         user_data = await state.get_data()
         task_text = user_data.get('current_task_text', 'Задание не найдено.')
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
 
-        review = await ai_processing.get_ai_review(prompt, task_text, recognized_text)
+        review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
         
         await message.answer(
             f"📝 <b>Ваш разбор ответа:</b>\n\n{review}",

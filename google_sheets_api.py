@@ -42,7 +42,6 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
     if not service:
         return None, None
     try:
-        # Запрашиваем данные с запасом до столбца C
         result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID,
             range=f"'{sheet_title}'!A1:C"
@@ -53,22 +52,17 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
         if not values:
             return None, None
 
-        # Промпт в A1
         prompt = values[0][0] if values and values[0] else "Промпт не найден."
-        
-        # Задания начинаются с 3-й строки (индекс 2)
         tasks = values[2:]
         if not tasks:
             return prompt, None
 
-        # Выбираем случайную строку из тех, где есть хотя бы ID и текст задания
         valid_tasks = [row for row in tasks if len(row) >= 2 and row[0] and row[1]]
         if not valid_tasks:
             return prompt, None
             
         random_task_row = random.choice(valid_tasks)
         
-        # Собираем данные в словарь, проверяя наличие каждого элемента
         task_data = {
             'id': random_task_row[0],
             'task_text': random_task_row[1],

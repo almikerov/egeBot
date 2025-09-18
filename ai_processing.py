@@ -1,47 +1,36 @@
 # ai_processing.py
 
 import asyncio
-import whisper
 import google.generativeai as genai
-from pydub import AudioSegment
 import os
 from config import GEMINI_API_KEYS
 
-print("Загрузка модели Whisper... (это может занять несколько минут)")
-whisper_model = whisper.load_model("base")
-print("Модель Whisper успешно загружена.")
-
-async def recognize_speech(ogg_audio_path: str) -> str:
-    mp3_audio_path = ogg_audio_path.replace(".ogg", ".mp3")
-    try:
-        audio = AudioSegment.from_ogg(ogg_audio_path)
-        audio.export(mp3_audio_path, format="mp3")
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, lambda: whisper_model.transcribe(mp3_audio_path))
-        recognized_text = result.get("text", "Текст не распознан.")
-        return recognized_text
-    except Exception as e:
-        print(f"Ошибка при распознавании речи: {e}")
-        return "Ошибка: не удалось распознать речь."
-    finally:
-        if os.path.exists(mp3_audio_path):
-            os.remove(mp3_audio_path)
-
-
-async def get_ai_review(prompt_template: str, task_text: str, user_text: str) -> str:
+async def get_ai_review(prompt_template: str, task_text: str, audio_file_path: str) -> str:
     """
-    Генерирует рецензию от AI, используя переданный шаблон промпта.
+    Генерирует рецензию от AI, НАПРЯМУЮ АНАЛИЗИРУЯ АУДИОФАЙЛ.
     """
-    prompt = prompt_template.format(task_text=task_text, user_text=user_text)
+    prompt = prompt_template.format(task_text=task_text, user_text="[АУДИООТВЕТ УЧЕНИКА ПРИКРЕПЛЕН К ЗАПРОСУ]")
     
     for api_key in GEMINI_API_KEYS:
         try:
             genai.configure(api_key=api_key)
+            
+            # Шаг 1: Загружаем аудиофайл в Gemini
+            print(f"Загрузка файла {audio_file_path} в Google AI...")
+            audio_file = await genai.upload_file_async(path=audio_file_path)
+            print("Файл успешно загружен.")
+
+            # Шаг 2: Создаем модель и отправляем промпт вместе с аудиофайлом
             model = genai.GenerativeModel('gemini-1.5-flash')
             
             print(f"Попытка использовать API ключ, который заканчивается на ...{api_key[-4:]}")
-            response = await model.generate_content_async(prompt)
-            print("Запрос к Gemini API успешен.")
+            response = await model.generate_content_async([prompt, audio_file])
+            print("Запрос к Gemini API с аудиофайлом успешен.")
+
+            # Шаг 3: Удаляем загруженный файл из хранилища Google
+            await genai.delete_file_async(name=audio_file.name)
+            print(f"Временный файл {audio_file.name} удален из Google AI.")
+
             return response.text
         
         except Exception as e:
