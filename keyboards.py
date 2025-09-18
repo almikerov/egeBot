@@ -1,6 +1,7 @@
 # keyboards.py
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from typing import List
 
 def main_menu_keyboard():
     """Возвращает клавиатуру главного меню."""
@@ -9,6 +10,14 @@ def main_menu_keyboard():
         [InlineKeyboardButton(text="⭐ Оформить подписку", callback_data="show_subscribe_options")],
         [InlineKeyboardButton(text="ℹ️ Информация", callback_data="show_info")]
     ])
+
+def task_type_keyboard(sheet_titles: List[str]):
+    """Создает клавиатуру для выбора типа задания на основе названий листов."""
+    buttons = []
+    for title in sheet_titles:
+        buttons.append([InlineKeyboardButton(text=title, callback_data=f"select_task_{title}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def subscribe_menu_keyboard(prices: dict):
     """Возвращает клавиатуру для выбора тарифа подписки с актуальными ценами."""
@@ -53,7 +62,6 @@ def back_to_main_menu_keyboard():
 def admin_menu_keyboard():
     """Возвращает клавиатуру главного меню админ-панели."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📄 Промпт", callback_data="admin_view_prompt"), InlineKeyboardButton(text="✏️ Изменить промпт", callback_data="admin_edit_prompt")],
         [InlineKeyboardButton(text="💰 Изменить цены", callback_data="admin_edit_prices")],
         [InlineKeyboardButton(text="👑 Администраторы", callback_data="admin_manage_admins")],
         [InlineKeyboardButton(text="👥 Пользователи с подпиской", callback_data="admin_view_subscribed")],

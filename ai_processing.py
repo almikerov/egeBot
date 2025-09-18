@@ -4,16 +4,16 @@ import asyncio
 import whisper
 import google.generativeai as genai
 from pydub import AudioSegment
+import os
 from config import GEMINI_API_KEYS
-from prompt_manager import load_prompt
 
 print("Загрузка модели Whisper... (это может занять несколько минут)")
 whisper_model = whisper.load_model("base")
 print("Модель Whisper успешно загружена.")
 
 async def recognize_speech(ogg_audio_path: str) -> str:
+    mp3_audio_path = ogg_audio_path.replace(".ogg", ".mp3")
     try:
-        mp3_audio_path = ogg_audio_path.replace(".ogg", ".mp3")
         audio = AudioSegment.from_ogg(ogg_audio_path)
         audio.export(mp3_audio_path, format="mp3")
         loop = asyncio.get_running_loop()
@@ -23,10 +23,16 @@ async def recognize_speech(ogg_audio_path: str) -> str:
     except Exception as e:
         print(f"Ошибка при распознавании речи: {e}")
         return "Ошибка: не удалось распознать речь."
+    finally:
+        if os.path.exists(mp3_audio_path):
+            os.remove(mp3_audio_path)
 
-async def get_ai_review(task_text: str, user_text: str) -> str:
-    base_prompt = load_prompt()
-    prompt = base_prompt.format(task_text=task_text, user_text=user_text)
+
+async def get_ai_review(prompt_template: str, task_text: str, user_text: str) -> str:
+    """
+    Генерирует рецензию от AI, используя переданный шаблон промпта.
+    """
+    prompt = prompt_template.format(task_text=task_text, user_text=user_text)
     
     for api_key in GEMINI_API_KEYS:
         try:
