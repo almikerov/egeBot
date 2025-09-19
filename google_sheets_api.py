@@ -43,10 +43,10 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
     if not service:
         return None, None
     try:
-        # Расширяем диапазон до колонки D, чтобы захватить время
+        # Расширяем диапазон до колонки E, чтобы захватить и изображения
         result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID,
-            range=f"'{sheet_title}'!A1:D"
+            range=f"'{sheet_title}'!A1:E"
         ).execute()
         
         values = result.get('values', [])
@@ -59,8 +59,8 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
         if not tasks:
             return prompt, None
 
-        # Учитываем новую колонку
-        valid_tasks = [row for row in tasks if len(row) >= 2 and row[0] and row[1]]
+        # Проверяем, что в строке есть ID и текст задания
+        valid_tasks = [row for row in tasks if len(row) >= 3 and row[0] and row[2]]
         if not valid_tasks:
             return prompt, None
             
@@ -68,10 +68,9 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
         
         task_data = {
             'id': random_task_row[0],
-            'task_text': random_task_row[1],
-            'image1': random_task_row[2] if len(random_task_row) > 2 and random_task_row[2] else None,
-            # Добавляем лимит времени, если он есть и является числом
-            'time_limit': int(random_task_row[3]) if len(random_task_row) > 3 and random_task_row[3].isdigit() else None
+            'time_limit': int(random_task_row[1]) if len(random_task_row) > 1 and random_task_row[1].isdigit() else None,
+            'task_text': random_task_row[2],
+            'image1': random_task_row[3] if len(random_task_row) > 3 and random_task_row[3] else None
         }
         
         return prompt, task_data
@@ -97,7 +96,7 @@ async def get_task_by_id(task_id: str) -> tuple:
         try:
             result = service.spreadsheets().values().get(
                 spreadsheetId=SPREADSHEET_ID,
-                range=f"'{title}'!A1:D"
+                range=f"'{title}'!A1:E"
             ).execute()
             
             values = result.get('values', [])
@@ -114,9 +113,9 @@ async def get_task_by_id(task_id: str) -> tuple:
                 if len(row) > 0 and row[0] == task_id:
                     task_data = {
                         'id': row[0],
-                        'task_text': row[1] if len(row) > 1 else "Текст задания отсутствует.",
-                        'image1': row[2] if len(row) > 2 and row[2] else None,
-                        'time_limit': int(row[3]) if len(row) > 3 and row[3].isdigit() else None
+                        'time_limit': int(row[1]) if len(row) > 1 and row[1].isdigit() else None,
+                        'task_text': row[2] if len(row) > 2 else "Текст задания отсутствует.",
+                        'image1': row[3] if len(row) > 3 and row[3] else None
                     }
                     return prompt, task_data
                     

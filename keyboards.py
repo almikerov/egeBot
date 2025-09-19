@@ -18,7 +18,7 @@ def task_type_keyboard(sheet_titles: List[str]):
         buttons.append([InlineKeyboardButton(text=title, callback_data=f"select_task_{title}")])
     
     # Добавляем новые кнопки внизу
-    buttons.append([InlineKeyboardButton(text="🔎 Получить по ID", callback_data="get_task_by_id_prompt")])
+    buttons.append([InlineKeyboardButton(text="🔎 Найти по ID", callback_data="get_task_by_id_prompt")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
