@@ -9,7 +9,8 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, FSInputFile
+# Добавляем InputMediaPhoto для медиагрупп
+from aiogram.types import Message, CallbackQuery, FSInputFile, InputMediaPhoto
 from datetime import datetime
 
 import keyboards as kb
@@ -27,7 +28,7 @@ router = Router()
 class UserState(StatesGroup):
     waiting_for_voice = State()
     waiting_for_payment_check = State()
-    waiting_for_task_id = State() # Новое состояние
+    waiting_for_task_id = State()
 
 class AdminState(StatesGroup):
     waiting_for_new_price = State()
@@ -39,7 +40,6 @@ def escape_markdown(text: str) -> str:
     """Экранирует специальные символы для MarkdownV2, которые НЕ являются частью форматирования."""
     if not isinstance(text, str):
         return ''
-    # РАСШИРЕННЫЙ СПИСОК СИМВОЛОВ ДЛЯ ЭКРАНИРОВАНИЯ
     escape_chars = r'[]()`>#+-={}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
@@ -49,7 +49,6 @@ def clean_ai_response(text: str) -> str:
     """
     if not isinstance(text, str):
         return ''
-    # Заменяем **bold** на *bold*
     cleaned_text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
     return cleaned_text
 
@@ -111,14 +110,23 @@ async def send_task(message: types.Message, state: FSMContext, task_data: dict, 
     with contextlib.suppress(TelegramBadRequest):
         await message.delete()
 
-    if task_data.get('image1'):
-        try:
-            await message.answer_photo(photo=task_data['image1'])
-            await message.answer(full_task_text, parse_mode="MarkdownV2")
-        except TelegramBadRequest as e:
-            print(f"Ошибка отправки фото: {e}. Отправляю текст.")
-            await message.answer(full_task_text, parse_mode="MarkdownV2")
-    else:
+    image1 = task_data.get('image1')
+    image2 = task_data.get('image2')
+
+    try:
+        if image1 and image2:
+            # Если есть два изображения, отправляем их как медиагруппу
+            media = [InputMediaPhoto(media=image1), InputMediaPhoto(media=image2)]
+            await message.answer_media_group(media)
+        elif image1:
+            # Если только одно, отправляем как обычно
+            await message.answer_photo(photo=image1)
+        
+        # Текст задания отправляем отдельным сообщением в любом случае
+        await message.answer(full_task_text, parse_mode="MarkdownV2")
+
+    except TelegramBadRequest as e:
+        print(f"Ошибка отправки медиа: {e}. Отправляю только текст.")
         await message.answer(full_task_text, parse_mode="MarkdownV2")
 
 
@@ -132,10 +140,8 @@ async def cmd_start(message: Message, state: FSMContext):
 @router.callback_query(F.data == "main_menu")
 async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    # Удаляем старое меню
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.delete()
-    # Присылаем новое
     await send_main_menu(callback.message, callback.from_user.id)
     await callback.answer()
 
@@ -219,7 +225,6 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
     await callback.answer(get_text('payment_check_started'), show_alert=False)
     is_paid = await robokassa_api.check_payment(invoice_id)
     
-    # Удаляем сообщение с кнопками оплаты в любом случае
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.delete()
 
@@ -239,7 +244,6 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
             )
         await send_main_menu(callback.message, user_id)
     else:
-        # Отправляем новое сообщение о неудаче, а не редактируем старое
         await callback.message.answer(
             get_text('payment_failed'),
             reply_markup=kb.payment_failed_keyboard()
@@ -252,7 +256,6 @@ async def check_user_can_get_task(user_id: int, message: types.Message) -> bool:
     tasks_info = await db.get_available_tasks(user_id)
     if not (tasks_info["is_subscribed"] or tasks_info["trials_left"] > 0 or tasks_info["single_left"] > 0):
         prices = load_prices()
-        # Определяем, откуда пришел запрос, чтобы правильно ответить
         if isinstance(message, CallbackQuery):
             await message.message.edit_text(
                 get_text('no_tasks_left'),
@@ -297,7 +300,6 @@ async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(F.data == "get_task_by_id_prompt")
 async def get_task_by_id_prompt_handler(callback: CallbackQuery, state: FSMContext):
-    # Проверка доступа вынесена в общую функцию и уже была вызвана в get_task_handler
     await state.set_state(UserState.waiting_for_task_id)
     await callback.message.edit_text(get_text('get_task_by_id_prompt'))
     await callback.answer()
@@ -305,7 +307,6 @@ async def get_task_by_id_prompt_handler(callback: CallbackQuery, state: FSMConte
 @router.message(UserState.waiting_for_task_id, F.text)
 async def get_task_by_id_finish_handler(message: Message, state: FSMContext):
     task_id = message.text.strip()
-    # Дополнительно проверяем доступ, если пользователь ввел ID напрямую
     if not await check_user_can_get_task(message.from_user.id, message):
         await state.clear()
         return
@@ -325,14 +326,13 @@ async def voice_message_handler(message: Message, state: FSMContext):
     user_data = await state.get_data()
     time_limit = user_data.get('time_limit')
 
-    # Проверяем длительность голосового сообщения
     if time_limit and message.voice.duration > time_limit:
         await message.answer(get_text('voice_too_long', limit=time_limit, duration=message.voice.duration))
         return
 
     await message.answer(get_text('voice_accepted'))
     voice_ogg_path = f"voice_{message.from_user.id}.ogg"
-    review = "" # Инициализируем переменную
+    review = ""
     try:
         voice_file_info = await message.bot.get_file(message.voice.file_id)
         await message.bot.download_file(voice_file_info.file_path, voice_ogg_path)
@@ -341,31 +341,25 @@ async def voice_message_handler(message: Message, state: FSMContext):
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
         
-        # --- Полная обработка ответа от AI ---
         cleaned_review = clean_ai_response(review)
         escaped_review = escape_markdown(cleaned_review)
         
-        # --- ИЗМЕНЕНИЕ ЛОГИКИ: ОТПРАВКА ДВУХ СООБЩЕНИЙ ---
-        # 1. Отправляем анализ без клавиатуры
         await message.answer(
             f"📝 *Ваш разбор ответа:*\n\n{escaped_review}",
             parse_mode="MarkdownV2"
         )
         
-        # 2. Отдельным сообщением присылаем главное меню
         await send_main_menu(message, message.from_user.id)
         
     except TelegramBadRequest as e:
         print(f"ОШИБКА: Не удалось отправить отформатированный ответ Gemini: {e}.")
         print("--- AI Response (Raw, Caused Error) ---")
-        print(review) # Печатаем "сырой" ответ, вызвавший ошибку
+        print(review)
         print("---------------------------------------")
         
-        # 1. Отправляем сообщение об ошибке
         await message.answer(
             f"📝 Ваш разбор ответа (ошибка форматирования):\n\n{review}"
         )
-        # 2. Все равно присылаем главное меню
         await send_main_menu(message, message.from_user.id)
         
     finally:

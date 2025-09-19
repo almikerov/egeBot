@@ -43,7 +43,7 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
     if not service:
         return None, None
     try:
-        # Расширяем диапазон до колонки E, чтобы захватить и изображения
+        # Расширяем диапазон до колонки E, чтобы захватить и второе изображение
         result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID,
             range=f"'{sheet_title}'!A1:E"
@@ -70,7 +70,8 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
             'id': random_task_row[0],
             'time_limit': int(random_task_row[1]) if len(random_task_row) > 1 and random_task_row[1].isdigit() else None,
             'task_text': random_task_row[2],
-            'image1': random_task_row[3] if len(random_task_row) > 3 and random_task_row[3] else None
+            'image1': random_task_row[3] if len(random_task_row) > 3 and random_task_row[3] else None,
+            'image2': random_task_row[4] if len(random_task_row) > 4 and random_task_row[4] else None # Добавляем второе изображение
         }
         
         return prompt, task_data
@@ -115,7 +116,8 @@ async def get_task_by_id(task_id: str) -> tuple:
                         'id': row[0],
                         'time_limit': int(row[1]) if len(row) > 1 and row[1].isdigit() else None,
                         'task_text': row[2] if len(row) > 2 else "Текст задания отсутствует.",
-                        'image1': row[3] if len(row) > 3 and row[3] else None
+                        'image1': row[3] if len(row) > 3 and row[3] else None,
+                        'image2': row[4] if len(row) > 4 and row[4] else None # Добавляем второе изображение
                     }
                     return prompt, task_data
                     
