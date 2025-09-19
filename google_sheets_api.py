@@ -20,14 +20,15 @@ def get_sheets_service():
         return None
 
 async def get_sheet_titles() -> list:
-    """Асинхронно получает список названий всех листов в таблице."""
+    """Асинхронно получает список названий всех листов в таблице, исключая те, что начинаются на '()'."""
     service = get_sheets_service()
     if not service:
         return []
     try:
         sheet_metadata = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
         sheets = sheet_metadata.get('sheets', '')
-        titles = [sheet['properties']['title'] for sheet in sheets]
+        # Фильтруем листы, названия которых не начинаются на "()"
+        titles = [sheet['properties']['title'] for sheet in sheets if not sheet['properties']['title'].startswith('()')]
         return titles
     except HttpError as err:
         print(f"Ошибка при получении названий листов: {err}")
@@ -42,9 +43,10 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
     if not service:
         return None, None
     try:
+        # Расширяем диапазон до колонки D, чтобы захватить время
         result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID,
-            range=f"'{sheet_title}'!A1:C"
+            range=f"'{sheet_title}'!A1:D"
         ).execute()
         
         values = result.get('values', [])
@@ -57,6 +59,7 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
         if not tasks:
             return prompt, None
 
+        # Учитываем новую колонку
         valid_tasks = [row for row in tasks if len(row) >= 2 and row[0] and row[1]]
         if not valid_tasks:
             return prompt, None
@@ -66,7 +69,9 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
         task_data = {
             'id': random_task_row[0],
             'task_text': random_task_row[1],
-            'image1': random_task_row[2] if len(random_task_row) > 2 and random_task_row[2] else None
+            'image1': random_task_row[2] if len(random_task_row) > 2 and random_task_row[2] else None,
+            # Добавляем лимит времени, если он есть и является числом
+            'time_limit': int(random_task_row[3]) if len(random_task_row) > 3 and random_task_row[3].isdigit() else None
         }
         
         return prompt, task_data
@@ -74,3 +79,49 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
     except HttpError as err:
         print(f"Ошибка при получении задания с листа '{sheet_title}': {err}")
         return None, None
+
+async def get_task_by_id(task_id: str) -> tuple:
+    """
+    Асинхронно ищет задание по ID по всем доступным листам.
+    Возвращает (prompt, task_data) или (None, None) если не найдено.
+    """
+    service = get_sheets_service()
+    if not service:
+        return None, None
+        
+    sheet_titles = await get_sheet_titles()
+    if not sheet_titles:
+        return None, None
+
+    for title in sheet_titles:
+        try:
+            result = service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"'{title}'!A1:D"
+            ).execute()
+            
+            values = result.get('values', [])
+            if not values:
+                continue
+
+            prompt = values[0][0] if values and values[0] else "Промпт не найден."
+            tasks = values[2:]
+            if not tasks:
+                continue
+            
+            for row in tasks:
+                # Ищем точное совпадение по ID
+                if len(row) > 0 and row[0] == task_id:
+                    task_data = {
+                        'id': row[0],
+                        'task_text': row[1] if len(row) > 1 else "Текст задания отсутствует.",
+                        'image1': row[2] if len(row) > 2 and row[2] else None,
+                        'time_limit': int(row[3]) if len(row) > 3 and row[3].isdigit() else None
+                    }
+                    return prompt, task_data
+                    
+        except HttpError as err:
+            print(f"Ошибка при поиске на листе '{title}': {err}")
+            continue
+            
+    return None, None

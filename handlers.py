@@ -27,6 +27,7 @@ router = Router()
 class UserState(StatesGroup):
     waiting_for_voice = State()
     waiting_for_payment_check = State()
+    waiting_for_task_id = State() # Новое состояние
 
 class AdminState(StatesGroup):
     waiting_for_new_price = State()
@@ -81,6 +82,45 @@ async def send_main_menu(message: types.Message, user_id: int):
         get_text('start', status_text=status_text),
         reply_markup=kb.main_menu_keyboard()
     )
+
+async def send_task(message: types.Message, state: FSMContext, task_data: dict, prompt: str):
+    """Универсальная функция для отправки задания пользователю."""
+    await db.use_task(message.from_user.id)
+    
+    await state.update_data(
+        current_task_text=task_data['task_text'], 
+        current_prompt=prompt,
+        time_limit=task_data.get('time_limit')
+    )
+    await state.set_state(UserState.waiting_for_voice)
+    
+    cleaned_task_text = clean_ai_response(task_data['task_text'])
+    escaped_text = escape_markdown(cleaned_task_text)
+    
+    quoted_task_text = "\n".join([f"> {line}" for line in escaped_text.split('\n')])
+    
+    safe_task_id = escape_markdown(task_data['id'])
+    task_id_text = f"_\\(ID: {safe_task_id}\\)_"
+    instruction_text = "_Запишите и отправьте свой ответ в виде голосового сообщения\\._"
+    
+    full_task_text = f"*Ваше задание:*\n\n{quoted_task_text}\n\n{task_id_text}\n\n{instruction_text}"
+
+    # Удаляем предыдущее сообщение, чтобы избежать нагромождения
+    if isinstance(message, CallbackQuery):
+        message = message.message
+    with contextlib.suppress(TelegramBadRequest):
+        await message.delete()
+
+    if task_data.get('image1'):
+        try:
+            await message.answer_photo(photo=task_data['image1'])
+            await message.answer(full_task_text, parse_mode="MarkdownV2")
+        except TelegramBadRequest as e:
+            print(f"Ошибка отправки фото: {e}. Отправляю текст.")
+            await message.answer(full_task_text, parse_mode="MarkdownV2")
+    else:
+        await message.answer(full_task_text, parse_mode="MarkdownV2")
+
 
 # --- Обработчики основного меню и команд ---
 @router.message(Command("start"))
@@ -206,22 +246,37 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
         )
 
 # --- ЛОГИКА ПОЛУЧЕНИЯ И ПРОВЕРКИ ЗАДАНИЙ ---
+
+async def check_user_can_get_task(user_id: int, message: types.Message) -> bool:
+    """Проверяет, есть ли у пользователя доступные задания, и отправляет сообщение, если нет."""
+    tasks_info = await db.get_available_tasks(user_id)
+    if not (tasks_info["is_subscribed"] or tasks_info["trials_left"] > 0 or tasks_info["single_left"] > 0):
+        prices = load_prices()
+        # Определяем, откуда пришел запрос, чтобы правильно ответить
+        if isinstance(message, CallbackQuery):
+            await message.message.edit_text(
+                get_text('no_tasks_left'),
+                reply_markup=kb.subscribe_menu_keyboard(prices)
+            )
+            await message.answer()
+        else:
+            await message.answer(
+                get_text('no_tasks_left'),
+                reply_markup=kb.subscribe_menu_keyboard(prices)
+            )
+        return False
+    return True
+
 @router.callback_query(F.data == "get_task")
 async def get_task_handler(callback: CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    tasks_info = await db.get_available_tasks(user_id)
-    prices = load_prices()
-    if not (tasks_info["is_subscribed"] or tasks_info["trials_left"] > 0 or tasks_info["single_left"] > 0):
-        await callback.message.edit_text(
-            get_text('no_tasks_left'),
-            reply_markup=kb.subscribe_menu_keyboard(prices)
-        )
-        await callback.answer()
+    if not await check_user_can_get_task(callback.from_user.id, callback):
         return
+        
     sheet_titles = await gs.get_sheet_titles()
     if not sheet_titles:
         await callback.answer("Не удалось загрузить типы заданий.", show_alert=True)
         return
+        
     await callback.message.edit_text(
         "Выберите тип задания:",
         reply_markup=kb.task_type_keyboard(sheet_titles)
@@ -237,46 +292,51 @@ async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext)
         await callback.message.edit_text("Не удалось загрузить задание с этого листа.", reply_markup=kb.back_to_main_menu_keyboard())
         await callback.answer()
         return
-    await db.use_task(callback.from_user.id)
-    
-    await state.update_data(
-        current_task_text=task_data['task_text'], 
-        current_prompt=prompt
-    )
-    await state.set_state(UserState.waiting_for_voice)
-    
-    cleaned_task_text = clean_ai_response(task_data['task_text'])
-    escaped_text = escape_markdown(cleaned_task_text)
-    
-    quoted_task_text = "\n".join([f"> {line}" for line in escaped_text.split('\n')])
-    
-    safe_task_id = escape_markdown(task_data['id'])
-    task_id_text = f"_\\(ID на ФИПИ: {safe_task_id}\\)_"
-    instruction_text = "_Запишите и отправьте свой ответ в виде голосового сообщения\\._"
-    
-    full_task_text = f"*Ваше задание:*\n\n{quoted_task_text}\n\n{task_id_text}\n\n{instruction_text}"
-
-    if task_data.get('image1'):
-        try:
-            await callback.message.delete()
-            await callback.message.answer_photo(photo=task_data['image1'])
-            await callback.message.answer(full_task_text, parse_mode="MarkdownV2")
-        except TelegramBadRequest as e:
-            print(f"Ошибка отправки фото: {e}. Отправляю текст.")
-            await callback.message.answer(full_task_text, parse_mode="MarkdownV2")
-    else:
-        await callback.message.edit_text(full_task_text, parse_mode="MarkdownV2")
+    await send_task(callback, state, task_data, prompt)
     await callback.answer()
+
+@router.callback_query(F.data == "get_task_by_id_prompt")
+async def get_task_by_id_prompt_handler(callback: CallbackQuery, state: FSMContext):
+    # Проверка доступа вынесена в общую функцию и уже была вызвана в get_task_handler
+    await state.set_state(UserState.waiting_for_task_id)
+    await callback.message.edit_text(get_text('get_task_by_id_prompt'))
+    await callback.answer()
+
+@router.message(UserState.waiting_for_task_id, F.text)
+async def get_task_by_id_finish_handler(message: Message, state: FSMContext):
+    task_id = message.text.strip()
+    # Дополнительно проверяем доступ, если пользователь ввел ID напрямую
+    if not await check_user_can_get_task(message.from_user.id, message):
+        await state.clear()
+        return
+
+    prompt, task_data = await gs.get_task_by_id(task_id)
+
+    if not task_data:
+        await message.answer(get_text('task_not_found'), reply_markup=kb.back_to_main_menu_keyboard())
+        await state.clear()
+        return
+    
+    await send_task(message, state, task_data, prompt)
+
 
 @router.message(UserState.waiting_for_voice, F.voice)
 async def voice_message_handler(message: Message, state: FSMContext):
+    user_data = await state.get_data()
+    time_limit = user_data.get('time_limit')
+
+    # Проверяем длительность голосового сообщения
+    if time_limit and message.voice.duration > time_limit:
+        await message.answer(get_text('voice_too_long', limit=time_limit, duration=message.voice.duration))
+        return
+
     await message.answer(get_text('voice_accepted'))
     voice_ogg_path = f"voice_{message.from_user.id}.ogg"
     review = "" # Инициализируем переменную
     try:
         voice_file_info = await message.bot.get_file(message.voice.file_id)
         await message.bot.download_file(voice_file_info.file_path, voice_ogg_path)
-        user_data = await state.get_data()
+        
         task_text = user_data.get('current_task_text', 'Задание не найдено.')
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
