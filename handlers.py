@@ -1,5 +1,4 @@
 # handlers.py
-
 import time
 import contextlib
 import os
@@ -17,7 +16,8 @@ import keyboards as kb
 import database as db
 import ai_processing
 import robokassa_api
-import google_sheets_api as gs
+# Импортируем новый модуль для работы со скриптом
+import google_script_api as gs
 from config import ADMIN_PASSWORD, SUPER_ADMIN_ID
 from text_manager import get_text
 from price_manager import load_prices, save_prices
@@ -98,7 +98,7 @@ async def send_task(message: types.Message, state: FSMContext, task_data: dict, 
     
     quoted_task_text = "\n".join([f"> {line}" for line in escaped_text.split('\n')])
     
-    safe_task_id = escape_markdown(task_data['id'])
+    safe_task_id = escape_markdown(str(task_data['id']))
     task_id_text = f"_\\(ID: {safe_task_id}\\)_"
     instruction_text = "_Запишите и отправьте свой ответ в виде голосового сообщения\\._"
     

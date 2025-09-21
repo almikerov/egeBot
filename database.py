@@ -1,244 +1,245 @@
 # database.py
 
-import sqlite3 as sq
+import gspread
+from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, List
-from config import SUPER_ADMIN_ID
+from config import SUPER_ADMIN_ID, GOOGLE_SHEETS_CREDENTIALS_JSON, SPREADSHEET_ID
 
-async def cleanup_old_pending_payments():
-    """Удаляет из pending_payments счета, созданные более 24 часов назад."""
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    
-    # Добавляем в таблицу столбец для времени создания, если его нет
-    try:
-        cur.execute("ALTER TABLE pending_payments ADD COLUMN created_at TEXT")
-    except sq.OperationalError:
-        # Столбец уже существует, ничего не делаем
-        pass
+# --- НАСТРОЙКА GOOGLE SHEETS ---
 
-    # Устанавливаем текущее время для записей, где оно отсутствует
-    cur.execute("UPDATE pending_payments SET created_at = ? WHERE created_at IS NULL", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
-    
-    # Вычисляем время 24 часа назад
-    cleanup_time_threshold = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Удаляем старые записи
-    cur.execute("DELETE FROM pending_payments WHERE created_at < ?", (cleanup_time_threshold,))
-    
-    deleted_rows = cur.rowcount
-    if deleted_rows > 0:
-        print(f"Автоматическая очистка: удалено {deleted_rows} старых записей из pending_payments.")
-        
-    db.commit()
-    db.close()
+# Указываем области доступа (scopes)
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive'
+]
+
+# Аутентификация
+try:
+    creds = Credentials.from_service_account_file(GOOGLE_SHEETS_CREDENTIALS_JSON, scopes=SCOPES)
+    client = gspread.authorize(creds)
+    # Открываем нашу таблицу
+    spreadsheet = client.open_by_key(SPREADSHEET_ID)
+except FileNotFoundError:
+    print(f"ОШИБКА: Файл с ключами '{GOOGLE_SHEETS_CREDENTIALS_JSON}' не найден. Убедитесь, что он существует и переменная окружения установлена правильно.")
+    exit()
+except Exception as e:
+    print(f"ОШИБКА при подключении к Google Sheets: {e}")
+    exit()
+
 
 async def db_start():
-    """
-    Инициализирует базу данных и создает таблицы, если они не существуют.
-    """
-    db = sq.connect('users.db')
-    cur = db.cursor()
+    """Проверяет наличие листов и заголовков в них, создает при необходимости."""
+    sheet_titles = [sh.title for sh in spreadsheet.worksheets()]
     
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            subscription_end_date TEXT,
-            trial_tasks_used INTEGER DEFAULT 0,
-            single_tasks_purchased INTEGER DEFAULT 0
-        )
-    """)
-    
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS admins (
-            user_id INTEGER PRIMARY KEY
-        )
-    """)
-    
-    # Добавлен столбец created_at для отслеживания времени создания счета
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS pending_payments (
-            invoice_id INTEGER PRIMARY KEY,
-            user_id INTEGER,
-            tariff TEXT,
-            amount INTEGER,
-            created_at TEXT 
-        )
-    """)
-    
-    cur.execute("SELECT 1 FROM admins")
-    if cur.fetchone() is None:
-        cur.execute("INSERT INTO admins (user_id) VALUES (?)", (SUPER_ADMIN_ID,))
-        print(f"Super admin with ID {SUPER_ADMIN_ID} added to the database.")
+    # Лист 'users'
+    if 'users' not in sheet_titles:
+        users_sheet = spreadsheet.add_worksheet(title="users", rows="100", cols="5")
+        users_sheet.append_row(['user_id', 'username', 'subscription_end_date', 'trial_tasks_used', 'single_tasks_purchased'])
+    else:
+        users_sheet = spreadsheet.worksheet('users')
+        if not users_sheet.get_all_values():
+            users_sheet.append_row(['user_id', 'username', 'subscription_end_date', 'trial_tasks_used', 'single_tasks_purchased'])
 
-    db.commit()
-    db.close()
+    # Лист 'admins'
+    if 'admins' not in sheet_titles:
+        admins_sheet = spreadsheet.add_worksheet(title="admins", rows="20", cols="1")
+        admins_sheet.append_row(['user_id'])
+        admins_sheet.append_row([SUPER_ADMIN_ID])
+    else:
+        admins_sheet = spreadsheet.worksheet('admins')
+        if not admins_sheet.get_all_values():
+            admins_sheet.append_row(['user_id'])
+            admins_sheet.append_row([SUPER_ADMIN_ID])
 
+    # Лист 'pending_payments'
+    if 'pending_payments' not in sheet_titles:
+        payments_sheet = spreadsheet.add_worksheet(title="pending_payments", rows="100", cols="5")
+        payments_sheet.append_row(['invoice_id', 'user_id', 'tariff', 'amount', 'created_at'])
+    else:
+        payments_sheet = spreadsheet.worksheet('pending_payments')
+        if not payments_sheet.get_all_values():
+            payments_sheet.append_row(['invoice_id', 'user_id', 'tariff', 'amount', 'created_at'])
+
+    print("База данных на Google Sheets готова к работе.")
+
+
+async def cleanup_old_pending_payments():
+    """Удаляет старые счета."""
+    payments_sheet = spreadsheet.worksheet('pending_payments')
+    all_payments = payments_sheet.get_all_records()
+    cleanup_time_threshold = datetime.now() - timedelta(hours=24)
+    rows_to_delete = []
+
+    for idx, payment in enumerate(all_payments, start=2):
+        if payment.get('created_at'):
+            try:
+                created_at = datetime.strptime(payment['created_at'], "%Y-%m-%d %H:%M:%S")
+                if created_at < cleanup_time_threshold:
+                    rows_to_delete.append(idx)
+            except ValueError:
+                continue
+
+    for row_index in sorted(rows_to_delete, reverse=True):
+        payments_sheet.delete_rows(row_index)
+    if rows_to_delete:
+        print(f"Автоматическая очистка: удалено {len(rows_to_delete)} старых счетов.")
+
+# --- Функции для работы с платежами ---
 async def add_pending_payment(invoice_id: int, user_id: int, tariff: str, amount: int):
-    """Добавляет информацию о новом счете в базу данных."""
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    # Записываем время создания счета
+    payments_sheet = spreadsheet.worksheet('pending_payments')
     creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cur.execute(
-        "INSERT INTO pending_payments (invoice_id, user_id, tariff, amount, created_at) VALUES (?, ?, ?, ?, ?)",
-        (invoice_id, user_id, tariff, amount, creation_time)
-    )
-    db.commit()
-    db.close()
+    payments_sheet.append_row([invoice_id, user_id, tariff, amount, creation_time])
 
 async def get_pending_payment(invoice_id: int) -> Optional[tuple]:
-    """Получает информацию о счете из базы данных."""
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("SELECT user_id, tariff, amount FROM pending_payments WHERE invoice_id = ?", (invoice_id,))
-    payment_data = cur.fetchone()
-    db.close()
-    return payment_data
+    payments_sheet = spreadsheet.worksheet('pending_payments')
+    try:
+        payment_cell = payments_sheet.find(str(invoice_id))
+        if payment_cell:
+            row_data = payments_sheet.row_values(payment_cell.row)
+            return int(row_data[1]), row_data[2], int(row_data[3])
+    except gspread.exceptions.CellNotFound:
+        return None
+    return None
 
 async def remove_pending_payment(invoice_id: int):
-    """Удаляет информацию о счете после успешной оплаты."""
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("DELETE FROM pending_payments WHERE invoice_id = ?", (invoice_id,))
-    db.commit()
-    db.close()
+    payments_sheet = spreadsheet.worksheet('pending_payments')
+    try:
+        payment_cell = payments_sheet.find(str(invoice_id))
+        if payment_cell:
+            payments_sheet.delete_rows(payment_cell.row)
+    except gspread.exceptions.CellNotFound:
+        pass
 
+# --- Функции для работы с пользователями ---
 async def add_user(user_id, username):
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
-    if cur.fetchone() is None:
-        cur.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, username))
-    else:
-        # Обновляем username, если пользователь его сменил
-        cur.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
-    db.commit()
-    db.close()
+    users_sheet = spreadsheet.worksheet('users')
+    try:
+        user_cell = users_sheet.find(str(user_id))
+        users_sheet.update_cell(user_cell.row, 2, username)
+    except gspread.exceptions.CellNotFound:
+        users_sheet.append_row([user_id, username, '', 0, 0])
 
 async def get_user_by_username(username: str) -> Optional[tuple]:
-    """Находит пользователя в таблице users по его username."""
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("SELECT user_id, username FROM users WHERE username = ?", (username,))
-    user = cur.fetchone()
-    db.close()
-    return user
+    users_sheet = spreadsheet.worksheet('users')
+    try:
+        user_cell = users_sheet.find(username, in_column=2)
+        user_id = users_sheet.cell(user_cell.row, 1).value
+        return int(user_id), username
+    except gspread.exceptions.CellNotFound:
+        return None
 
 async def set_subscription(user_id: int, days: int):
+    users_sheet = spreadsheet.worksheet('users')
     end_date = datetime.now() + timedelta(days=days)
     end_date_str = end_date.strftime("%Y-%m-%d %H:%M:%S")
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("UPDATE users SET subscription_end_date = ? WHERE user_id = ?", (end_date_str, user_id))
-    db.commit()
-    db.close()
+    try:
+        user_cell = users_sheet.find(str(user_id))
+        users_sheet.update_cell(user_cell.row, 3, end_date_str)
+    except gspread.exceptions.CellNotFound:
+        pass
 
 async def check_subscription(user_id: int) -> Tuple[bool, Optional[str]]:
     if await is_admin_db(user_id):
         return True, "admin"
-
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("SELECT subscription_end_date FROM users WHERE user_id = ?", (user_id,))
-    result = cur.fetchone()
-    db.close()
-
-    if result and result[0]:
-        end_date = datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
-        if datetime.now() < end_date:
-            return True, result[0]
-            
+    
+    users_sheet = spreadsheet.worksheet('users')
+    try:
+        user_cell = users_sheet.find(str(user_id))
+        end_date_str = users_sheet.cell(user_cell.row, 3).value
+        if end_date_str:
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d %H:%M:%S")
+            if datetime.now() < end_date:
+                return True, end_date_str
+    except (gspread.exceptions.CellNotFound, ValueError):
+        return False, None
     return False, None
 
 async def get_available_tasks(user_id: int) -> dict:
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("SELECT trial_tasks_used, single_tasks_purchased FROM users WHERE user_id = ?", (user_id,))
-    result = cur.fetchone()
-    db.close()
-    
-    if not result:
-        return {"is_subscribed": False, "trials_left": 2, "single_left": 0}
-        
+    users_sheet = spreadsheet.worksheet('users')
     is_subscribed, _ = await check_subscription(user_id)
-    trials_used, single_purchased = result
     
-    return {
-        "is_subscribed": is_subscribed,
-        "trials_left": max(0, 2 - trials_used),
-        "single_left": single_purchased
-    }
+    try:
+        user_cell = users_sheet.find(str(user_id))
+        row_data = users_sheet.row_values(user_cell.row)
+        trials_used = int(row_data[3])
+        single_purchased = int(row_data[4])
+        trials_left = max(0, 2 - trials_used)
+        single_left = single_purchased
+    except (gspread.exceptions.CellNotFound, IndexError, ValueError):
+        # Если пользователь не найден или данные некорректны, возвращаем значения по умолчанию
+        await add_user(user_id, 'unknown') # Добавляем пользователя, если его нет
+        return {"is_subscribed": is_subscribed, "trials_left": 2, "single_left": 0}
+
+    return {"is_subscribed": is_subscribed, "trials_left": trials_left, "single_left": single_left}
 
 async def use_task(user_id: int):
     is_subscribed, _ = await check_subscription(user_id)
     if is_subscribed:
         return
 
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("SELECT trial_tasks_used, single_tasks_purchased FROM users WHERE user_id = ?", (user_id,))
-    result = cur.fetchone()
-    if not result:
-        db.close()
-        return
-
-    trials_used, single_purchased = result
-    if trials_used < 2:
-        cur.execute("UPDATE users SET trial_tasks_used = trial_tasks_used + 1 WHERE user_id = ?", (user_id,))
-    elif single_purchased > 0:
-        cur.execute("UPDATE users SET single_tasks_purchased = single_tasks_purchased - 1 WHERE user_id = ?", (user_id,))
-    
-    db.commit()
-    db.close()
+    users_sheet = spreadsheet.worksheet('users')
+    try:
+        user_cell = users_sheet.find(str(user_id))
+        row_data = users_sheet.row_values(user_cell.row)
+        trials_used = int(row_data[3])
+        single_purchased = int(row_data[4])
+        
+        if trials_used < 2:
+            users_sheet.update_cell(user_cell.row, 4, trials_used + 1)
+        elif single_purchased > 0:
+            users_sheet.update_cell(user_cell.row, 5, single_purchased - 1)
+    except (gspread.exceptions.CellNotFound, IndexError, ValueError):
+        pass
 
 async def add_single_tasks(user_id: int, count: int):
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("UPDATE users SET single_tasks_purchased = single_tasks_purchased + ? WHERE user_id = ?", (count, user_id))
-    db.commit()
-    db.close()
+    users_sheet = spreadsheet.worksheet('users')
+    try:
+        user_cell = users_sheet.find(str(user_id))
+        current_single = int(users_sheet.cell(user_cell.row, 5).value)
+        users_sheet.update_cell(user_cell.row, 5, current_single + count)
+    except (gspread.exceptions.CellNotFound, ValueError):
+        pass
 
 async def get_subscribed_users() -> List[tuple]:
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cur.execute("SELECT user_id, username, subscription_end_date FROM users WHERE subscription_end_date > ?", (now_str,))
-    users = cur.fetchall()
-    db.close()
-    return users
+    users_sheet = spreadsheet.worksheet('users')
+    all_users = users_sheet.get_all_records()
+    subscribed = []
+    now = datetime.now()
+    for user in all_users:
+        if user.get('subscription_end_date'):
+            try:
+                end_date = datetime.strptime(user['subscription_end_date'], "%Y-%m-%d %H:%M:%S")
+                if end_date > now:
+                    subscribed.append((user['user_id'], user['username'], user['subscription_end_date']))
+            except ValueError:
+                continue
+    return subscribed
 
+# --- Функции для работы с админами ---
 async def is_admin_db(user_id: int) -> bool:
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
-    result = cur.fetchone()
-    db.close()
-    return result is not None
+    admins_sheet = spreadsheet.worksheet('admins')
+    admin_ids = admins_sheet.col_values(1)
+    return str(user_id) in admin_ids
 
 async def get_admins() -> List[int]:
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("SELECT user_id FROM admins")
-    admins = [row[0] for row in cur.fetchall()]
-    db.close()
-    return admins
+    admins_sheet = spreadsheet.worksheet('admins')
+    admin_ids_str = admins_sheet.col_values(1)
+    return [int(id_str) for id_str in admin_ids_str if id_str.isdigit()]
 
 async def add_admin(user_id: int):
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (user_id,))
-    db.commit()
-    db.close()
+    if not await is_admin_db(user_id):
+        admins_sheet = spreadsheet.worksheet('admins')
+        admins_sheet.append_row([user_id])
 
 async def remove_admin(user_id: int):
     if user_id == SUPER_ADMIN_ID:
-        print("Attempt to remove super admin was blocked.")
+        print("Попытка удалить супер-админа заблокирована.")
         return
-        
-    db = sq.connect('users.db')
-    cur = db.cursor()
-    cur.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
-    db.commit()
-    db.close()
+    
+    admins_sheet = spreadsheet.worksheet('admins')
+    try:
+        admin_cell = admins_sheet.find(str(user_id))
+        admins_sheet.delete_rows(admin_cell.row)
+    except gspread.exceptions.CellNotFound:
+        pass
