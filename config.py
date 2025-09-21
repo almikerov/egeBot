@@ -9,7 +9,10 @@ load_dotenv()
 # --- Ключи и токены ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+
+# --- Ключи для Google ---
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") # Для чтения заданий из Google Sheets
+SPREADSHEET_ID = os.getenv("SPREADSHEET_ID") # ID таблицы с заданиями
 
 # Загружаем ключи Gemini и разделяем их по запятой
 gemini_api_keys_str = os.getenv("GEMINI_API_KEY", "")
@@ -24,8 +27,11 @@ ROBOKASSA_PASSWORD_2 = os.getenv("ROBOKASSA_PASSWORD_2")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # --- Проверка переменных ---
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ: Добавлена проверка DATABASE_URL ---
-if not all([TELEGRAM_TOKEN, ADMIN_PASSWORD, GOOGLE_API_KEY, ROBOKASSA_MERCHANT_LOGIN, ROBOKASSA_PASSWORD_1, ROBOKASSA_PASSWORD_2, DATABASE_URL]):
+if not all([
+    TELEGRAM_TOKEN, ADMIN_PASSWORD, GOOGLE_API_KEY, SPREADSHEET_ID,
+    ROBOKASSA_MERCHANT_LOGIN, ROBOKASSA_PASSWORD_1, ROBOKASSA_PASSWORD_2,
+    DATABASE_URL
+]):
     raise ValueError("ОШИБКА: Одна или несколько основных переменных окружения не загружены.")
 
 if not GEMINI_API_KEYS:
