@@ -18,5 +18,5 @@ __pycache__/
 *.db
 
 # Игнорировать JSON-ключ от Google Cloud
-wired-name-465917-a5-c0737a3ad5dc.json
+firebase-465917-ddc1e2847193.json
 *.json
