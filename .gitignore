@@ -18,5 +18,5 @@ __pycache__/
 *.db
 
 # Игнорировать JSON-ключ от Google Cloud
-prices.json
+wired-name-465917-a5-c0737a3ad5dc.json
 *.json
