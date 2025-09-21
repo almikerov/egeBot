@@ -17,7 +17,7 @@ import database as db
 import ai_processing
 import robokassa_api
 # Импортируем новый модуль для работы со скриптом
-import google_script_api as gs
+import google_sheets_api as gs
 from config import ADMIN_PASSWORD, SUPER_ADMIN_ID
 from text_manager import get_text
 from price_manager import load_prices, save_prices
