@@ -1,4 +1,5 @@
 # handlers.py
+
 import time
 import contextlib
 import os
@@ -16,7 +17,6 @@ import keyboards as kb
 import database as db
 import ai_processing
 import robokassa_api
-# Импортируем новый модуль для работы со скриптом
 import google_sheets_api as gs
 from config import ADMIN_PASSWORD, SUPER_ADMIN_ID
 from text_manager import get_text
@@ -60,7 +60,7 @@ async def is_admin(user_id: int) -> bool:
 async def get_user_status_text(user_id: int) -> str:
     if await is_admin(user_id):
         return get_text('status_admin')
-    
+
     is_subscribed, end_date = await db.check_subscription(user_id)
     if is_subscribed:
         if end_date and end_date != "admin":
@@ -85,23 +85,23 @@ async def send_main_menu(message: types.Message, user_id: int):
 async def send_task(message: types.Message, state: FSMContext, task_data: dict, prompt: str):
     """Универсальная функция для отправки задания пользователю."""
     await db.use_task(message.from_user.id)
-    
+
     await state.update_data(
-        current_task_text=task_data['task_text'], 
+        current_task_text=task_data['task_text'],
         current_prompt=prompt,
         time_limit=task_data.get('time_limit')
     )
     await state.set_state(UserState.waiting_for_voice)
-    
+
     cleaned_task_text = clean_ai_response(task_data['task_text'])
     escaped_text = escape_markdown(cleaned_task_text)
-    
+
     quoted_task_text = "\n".join([f"> {line}" for line in escaped_text.split('\n')])
-    
-    safe_task_id = escape_markdown(str(task_data['id']))
+
+    safe_task_id = escape_markdown(task_data['id'])
     task_id_text = f"_\\(ID: {safe_task_id}\\)_"
     instruction_text = "_Запишите и отправьте свой ответ в виде голосового сообщения\\._"
-    
+
     full_task_text = f"*Ваше задание:*\n\n{quoted_task_text}\n\n{task_id_text}\n\n{instruction_text}"
 
     # Удаляем предыдущее сообщение, чтобы избежать нагромождения
@@ -115,14 +115,11 @@ async def send_task(message: types.Message, state: FSMContext, task_data: dict, 
 
     try:
         if image1 and image2:
-            # Если есть два изображения, отправляем их как медиагруппу
             media = [InputMediaPhoto(media=image1), InputMediaPhoto(media=image2)]
             await message.answer_media_group(media)
         elif image1:
-            # Если только одно, отправляем как обычно
             await message.answer_photo(photo=image1)
         
-        # Текст задания отправляем отдельным сообщением в любом случае
         await message.answer(full_task_text, parse_mode="MarkdownV2")
 
     except TelegramBadRequest as e:
@@ -137,13 +134,24 @@ async def cmd_start(message: Message, state: FSMContext):
     await db.add_user(message.from_user.id, message.from_user.username)
     await send_main_menu(message, message.from_user.id)
 
+# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
 @router.callback_query(F.data == "main_menu")
 async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    with contextlib.suppress(TelegramBadRequest):
+    status_text = await get_user_status_text(callback.from_user.id)
+    try:
+        # Пытаемся отредактировать текущее сообщение
+        await callback.message.edit_text(
+            get_text('start', status_text=status_text),
+            reply_markup=kb.main_menu_keyboard()
+        )
+    except TelegramBadRequest:
+        # Если не получилось (например, текст тот же), удаляем старое и отправляем новое
         await callback.message.delete()
-    await send_main_menu(callback.message, callback.from_user.id)
-    await callback.answer()
+        await send_main_menu(callback.message, callback.from_user.id)
+    finally:
+        await callback.answer()
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 @router.message(Command("webapp"))
 async def cmd_webapp(message: Message):
@@ -224,7 +232,7 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
     is_paid = await robokassa_api.check_payment(invoice_id)
-    
+
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.delete()
 
@@ -274,12 +282,12 @@ async def check_user_can_get_task(user_id: int, message: types.Message) -> bool:
 async def get_task_handler(callback: CallbackQuery, state: FSMContext):
     if not await check_user_can_get_task(callback.from_user.id, callback):
         return
-        
+
     sheet_titles = await gs.get_sheet_titles()
     if not sheet_titles:
         await callback.answer("Не удалось загрузить типы заданий.", show_alert=True)
         return
-        
+
     await callback.message.edit_text(
         "Выберите тип задания:",
         reply_markup=kb.task_type_keyboard(sheet_titles)
@@ -317,7 +325,7 @@ async def get_task_by_id_finish_handler(message: Message, state: FSMContext):
         await message.answer(get_text('task_not_found'), reply_markup=kb.back_to_main_menu_keyboard())
         await state.clear()
         return
-    
+
     await send_task(message, state, task_data, prompt)
 
 
@@ -336,32 +344,32 @@ async def voice_message_handler(message: Message, state: FSMContext):
     try:
         voice_file_info = await message.bot.get_file(message.voice.file_id)
         await message.bot.download_file(voice_file_info.file_path, voice_ogg_path)
-        
+
         task_text = user_data.get('current_task_text', 'Задание не найдено.')
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
-        
+
         cleaned_review = clean_ai_response(review)
         escaped_review = escape_markdown(cleaned_review)
-        
+
         await message.answer(
             f"📝 *Ваш разбор ответа:*\n\n{escaped_review}",
             parse_mode="MarkdownV2"
         )
-        
+
         await send_main_menu(message, message.from_user.id)
-        
+
     except TelegramBadRequest as e:
         print(f"ОШИБКА: Не удалось отправить отформатированный ответ Gemini: {e}.")
         print("--- AI Response (Raw, Caused Error) ---")
         print(review)
         print("---------------------------------------")
-        
+
         await message.answer(
             f"📝 Ваш разбор ответа (ошибка форматирования):\n\n{review}"
         )
         await send_main_menu(message, message.from_user.id)
-        
+
     finally:
         await state.clear()
         if os.path.exists(voice_ogg_path):
