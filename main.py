@@ -14,11 +14,9 @@ from database import db_start, cleanup_old_pending_payments
 
 # URL вебхука будет браться из переменных окружения Render
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-WEBHOOK_PATH = f"/webhook/{TELEGRAM_TOKEN}" # Используем токен в пути для секретности
+WEBHOOK_PATH = f"/webhook/{TELEGRAM_TOKEN}"
 
-# Настройки веб-сервера
 WEB_SERVER_HOST = "0.0.0.0"
-# Render предоставляет порт в переменной окружения PORT
 WEB_SERVER_PORT = int(os.getenv('PORT', 8000))
 
 async def on_startup(bot: Bot):
@@ -27,7 +25,11 @@ async def on_startup(bot: Bot):
     await bot.set_webhook(f"{WEBHOOK_URL}{WEBHOOK_PATH}")
     print("Вебхук успешно установлен!")
 
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ: ФУНКЦИЯ on_shutdown ПОЛНОСТЬЮ УДАЛЕНА ---
+# --- ИЗМЕНЕНИЕ ЗДЕСЬ: ДОБАВЛЕНА ФУНКЦИЯ HEALTH CHECK ---
+async def health_check(request):
+    """Отвечает на запросы Render, чтобы бот не засыпал."""
+    return web.Response(text="Bot is alive!")
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 async def scheduled_cleanup(wait_for_seconds: int):
     """Запускает функцию очистки каждые N секунд."""
@@ -42,16 +44,16 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    # Регистрируем ТОЛЬКО функцию запуска
     dp.startup.register(on_startup)
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: РЕГИСТРАЦИЯ on_shutdown УДАЛЕНА ---
     
-    # Запускаем фоновую задачу для очистки
     asyncio.create_task(scheduled_cleanup(86400))
 
-    # Создаем веб-приложение aiohttp
     app = web.Application()
     
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: РЕГИСТРИРУЕМ НОВЫЙ ПУТЬ ---
+    app.router.add_get("/health", health_check)
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
@@ -68,5 +70,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        # Эта часть остается, она не мешает
         print("Бот остановлен.")
