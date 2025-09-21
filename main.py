@@ -27,10 +27,7 @@ async def on_startup(bot: Bot):
     await bot.set_webhook(f"{WEBHOOK_URL}{WEBHOOK_PATH}")
     print("Вебхук успешно установлен!")
 
-async def on_shutdown(bot: Bot):
-    """Действия при остановке бота: удаление вебхука."""
-    await bot.delete_webhook()
-    print("Вебхук удален.")
+# --- ИЗМЕНЕНИЕ ЗДЕСЬ: ФУНКЦИЯ on_shutdown ПОЛНОСТЬЮ УДАЛЕНА ---
 
 async def scheduled_cleanup(wait_for_seconds: int):
     """Запускает функцию очистки каждые N секунд."""
@@ -45,9 +42,9 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    # Регистрируем функции запуска и остановки
+    # Регистрируем ТОЛЬКО функцию запуска
     dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: РЕГИСТРАЦИЯ on_shutdown УДАЛЕНА ---
     
     # Запускаем фоновую задачу для очистки
     asyncio.create_task(scheduled_cleanup(86400))
@@ -55,24 +52,21 @@ async def main():
     # Создаем веб-приложение aiohttp
     app = web.Application()
     
-    # Создаем обработчик вебхуков для aiogram
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
     )
-    # Регистрируем его в приложении
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
     
-    # Настраиваем и запускаем приложение
     setup_application(app, dp, bot=bot)
     
     print(f"Бот готов к запуску на порту {WEB_SERVER_PORT}!")
     
-    # Запускаем веб-сервер
     await web._run_app(app, host=WEB_SERVER_HOST, port=WEB_SERVER_PORT)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
+        # Эта часть остается, она не мешает
         print("Бот остановлен.")
