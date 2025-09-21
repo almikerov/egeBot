@@ -18,15 +18,22 @@ def get_sheets_service():
         return None
 
 async def get_sheet_titles() -> list:
-    """Асинхронно получает список названий всех листов в таблице, исключая те, что начинаются на '()'."""
+    """Асинхронно получает список названий всех листов, которые начинаются на '()'."""
     service = get_sheets_service()
     if not service:
         return []
     try:
         sheet_metadata = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
         sheets = sheet_metadata.get('sheets', '')
-        # Фильтруем листы, названия которых не начинаются на "()"
-        titles = [sheet['properties']['title'] for sheet in sheets if not sheet['properties']['title'].startswith('()')]
+
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+        # Теперь выбираем ТОЛЬКО те листы, названия которых начинаются на "()"
+        titles = [
+            sheet['properties']['title'] for sheet in sheets
+            if sheet['properties']['title'].startswith('()')
+        ]
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
         return titles
     except HttpError as err:
         print(f"Ошибка при получении названий листов: {err}")
@@ -41,7 +48,6 @@ async def get_task_from_sheet(sheet_title: str) -> tuple:
     if not service:
         return None, None
     try:
-        # Расширяем диапазон до колонки E
         result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID,
             range=f"'{sheet_title}'!A1:E"
