@@ -134,24 +134,20 @@ async def cmd_start(message: Message, state: FSMContext):
     await db.add_user(message.from_user.id, message.from_user.username)
     await send_main_menu(message, message.from_user.id)
 
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
 @router.callback_query(F.data == "main_menu")
 async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     status_text = await get_user_status_text(callback.from_user.id)
     try:
-        # Пытаемся отредактировать текущее сообщение
         await callback.message.edit_text(
             get_text('start', status_text=status_text),
             reply_markup=kb.main_menu_keyboard()
         )
     except TelegramBadRequest:
-        # Если не получилось (например, текст тот же), удаляем старое и отправляем новое
         await callback.message.delete()
         await send_main_menu(callback.message, callback.from_user.id)
     finally:
         await callback.answer()
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 @router.message(Command("webapp"))
 async def cmd_webapp(message: Message):
@@ -201,15 +197,21 @@ async def show_subscribe_menu(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("buy_"))
 async def buy_handler(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
-    tariff = callback.data.split("_")[1]
+    tariff = callback.data[len("buy_"):]
+    
     prices = load_prices()
     amount = prices.get(tariff)
-    if not amount: return await callback.answer("Тариф не найден.", show_alert=True)
+    if not amount: 
+        return await callback.answer("Тариф не найден.", show_alert=True)
+        
     invoice_id = int(f"{user_id}{int(time.time())}")
     payment_link = robokassa_api.generate_payment_link(user_id, amount, invoice_id)
+    
     await db.add_pending_payment(invoice_id, user_id, tariff, amount)
+    
     await state.update_data(invoice_id=invoice_id)
     await state.set_state(UserState.waiting_for_payment_check)
+    
     await callback.message.edit_text(
         get_text('buy_prompt', tariff=tariff, amount=amount),
         reply_markup=kb.payment_keyboard(payment_link, amount)
@@ -224,11 +226,13 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
         await callback.answer("Ошибка: сессия проверки истекла.", show_alert=True)
         await show_subscribe_menu(callback, state)
         return
+
     payment_data = await db.get_pending_payment(invoice_id)
     if not payment_data:
         await callback.answer("Ошибка: не удалось найти счет.", show_alert=True)
         await show_subscribe_menu(callback, state)
         return
+
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
     is_paid = await robokassa_api.check_payment(invoice_id)
@@ -239,17 +243,22 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
     if is_paid:
         await state.clear()
         await db.remove_pending_payment(invoice_id)
-        if tariff in ["week", "month"]:
-            days = 7 if tariff == "week" else 30
-            await db.set_subscription(user_id, days)
+        
+        if tariff == "week":
+            await db.set_subscription(user_id, 7)
             await callback.message.answer(
-                get_text('payment_success_subscription', days=days)
+                get_text('payment_success_subscription', days=7)
             )
-        elif tariff == "single":
-            await db.add_single_tasks(user_id, 1)
-            await callback.message.answer(
-                get_text('payment_success_single')
-            )
+        elif tariff.startswith("single"):
+            try:
+                count = int(tariff.split("_")[1])
+                await db.add_single_tasks(user_id, count)
+                await callback.message.answer(
+                    get_text('payment_success_single', count=count)
+                )
+            except (IndexError, ValueError):
+                 await callback.message.answer("Произошла ошибка при начислении заданий.")
+
         await send_main_menu(callback.message, user_id)
     else:
         await callback.message.answer(

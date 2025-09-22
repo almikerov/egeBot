@@ -15,10 +15,7 @@ def task_type_keyboard(sheet_titles: List[str]):
     """Создает клавиатуру для выбора типа задания и добавляет кнопку получения по ID."""
     buttons = []
     for title in sheet_titles:
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-        # Убираем "()" из названия для отображения на кнопке
         button_text = title.replace('()', '').strip()
-        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
         buttons.append([InlineKeyboardButton(text=button_text, callback_data=f"select_task_{title}")])
     
     buttons.append([InlineKeyboardButton(text="🔎 Найти по ID", callback_data="get_task_by_id_prompt")])
@@ -37,9 +34,10 @@ def web_app_keyboard(url: str):
 def subscribe_menu_keyboard(prices: dict):
     """Возвращает клавиатуру для выбора тарифа подписки с актуальными ценами."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"Неделя - {prices.get('week', 'N/A')} RUB", callback_data="buy_week")],
-        [InlineKeyboardButton(text=f"Месяц - {prices.get('month', 'N/A')} RUB", callback_data="buy_month")],
-        [InlineKeyboardButton(text=f"1 задание - {prices.get('single', 'N/A')} RUB", callback_data="buy_single")],
+        [InlineKeyboardButton(text=f"1 использование - {prices.get('single_1', 'N/A')} RUB", callback_data="buy_single_1")],
+        [InlineKeyboardButton(text=f"5 использований - {prices.get('single_5', 'N/A')} RUB", callback_data="buy_single_5")],
+        [InlineKeyboardButton(text=f"10 использований - {prices.get('single_10', 'N/A')} RUB", callback_data="buy_single_10")],
+        [InlineKeyboardButton(text=f"Подписка на неделю - {prices.get('week', 'N/A')} RUB", callback_data="buy_week")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
     ])
     
