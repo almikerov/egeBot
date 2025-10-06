@@ -30,7 +30,7 @@ async def get_ai_review(prompt_template: str, task_text: str, audio_file_path: s
             print("Файл успешно загружен.")
             # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.5-flash')
             
             print(f"Попытка использовать API ключ, который заканчивается на ...{api_key[-4:]}")
             response = await model.generate_content_async([prompt, audio_file])
