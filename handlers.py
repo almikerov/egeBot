@@ -17,7 +17,7 @@ import keyboards as kb
 import database as db
 import ai_processing
 import robokassa_api
-import google_sheets_api as gs
+import task_manager as tm # ИЗМЕНЕНО
 from config import ADMIN_PASSWORD, SUPER_ADMIN_ID
 from text_manager import get_text
 from price_manager import load_prices, save_prices
@@ -98,7 +98,7 @@ async def send_task(message: types.Message, state: FSMContext, task_data: dict, 
     
     quoted_task_text = "\n".join([f"> {line}" for line in escaped_text.split('\n')])
     
-    safe_task_id = escape_markdown(task_data['id'])
+    safe_task_id = escape_markdown(str(task_data['id']))
     task_id_text = f"_\\(ID: {safe_task_id}\\)_"
     instruction_text = "_Запишите и отправьте свой ответ в виде голосового сообщения\\._"
     
@@ -115,14 +115,11 @@ async def send_task(message: types.Message, state: FSMContext, task_data: dict, 
 
     try:
         if image1 and image2:
-            # Если есть два изображения, отправляем их как медиагруппу
             media = [InputMediaPhoto(media=image1), InputMediaPhoto(media=image2)]
             await message.answer_media_group(media)
         elif image1:
-            # Если только одно, отправляем как обычно
             await message.answer_photo(photo=image1)
         
-        # Текст задания отправляем отдельным сообщением в любом случае
         await message.answer(full_task_text, parse_mode="MarkdownV2")
 
     except TelegramBadRequest as e:
@@ -275,24 +272,24 @@ async def get_task_handler(callback: CallbackQuery, state: FSMContext):
     if not await check_user_can_get_task(callback.from_user.id, callback):
         return
         
-    sheet_titles = await gs.get_sheet_titles()
-    if not sheet_titles:
-        await callback.answer("Не удалось загрузить типы заданий.", show_alert=True)
+    task_types = tm.get_task_types()
+    if not task_types:
+        await callback.answer("Не удалось загрузить типы заданий. Возможно, файл с заданиями пуст.", show_alert=True)
         return
         
     await callback.message.edit_text(
         "Выберите тип задания:",
-        reply_markup=kb.task_type_keyboard(sheet_titles)
+        reply_markup=kb.task_type_keyboard(task_types)
     )
     await callback.answer()
 
 @router.callback_query(F.data.startswith("select_task_"))
 async def task_type_selected_handler(callback: CallbackQuery, state: FSMContext):
-    sheet_title = callback.data[len("select_task_"):]
+    task_type = callback.data[len("select_task_"):]
     await callback.message.edit_text("🔄 Загружаю ваше задание...")
-    prompt, task_data = await gs.get_task_from_sheet(sheet_title)
+    prompt, task_data = tm.get_random_task(task_type)
     if not prompt or not task_data:
-        await callback.message.edit_text("Не удалось загрузить задание с этого листа.", reply_markup=kb.back_to_main_menu_keyboard())
+        await callback.message.edit_text("Не удалось загрузить задание этого типа.", reply_markup=kb.back_to_main_menu_keyboard())
         await callback.answer()
         return
     await send_task(callback, state, task_data, prompt)
@@ -311,7 +308,7 @@ async def get_task_by_id_finish_handler(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    prompt, task_data = await gs.get_task_by_id(task_id)
+    prompt, task_data = tm.get_task_by_id(task_id)
 
     if not task_data:
         await message.answer(get_text('task_not_found'), reply_markup=kb.back_to_main_menu_keyboard())

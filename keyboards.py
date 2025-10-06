@@ -11,10 +11,10 @@ def main_menu_keyboard():
         [InlineKeyboardButton(text="ℹ️ Информация", callback_data="show_info")]
     ])
 
-def task_type_keyboard(sheet_titles: List[str]):
+def task_type_keyboard(task_types: List[str]): # ИЗМЕНЕНО
     """Создает клавиатуру для выбора типа задания и добавляет кнопку получения по ID."""
     buttons = []
-    for title in sheet_titles:
+    for title in task_types: # ИЗМЕНЕНО
         buttons.append([InlineKeyboardButton(text=title, callback_data=f"select_task_{title}")])
     
     # Добавляем новые кнопки внизу
