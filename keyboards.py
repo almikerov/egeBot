@@ -11,13 +11,12 @@ def main_menu_keyboard():
         [InlineKeyboardButton(text="ℹ️ Информация", callback_data="show_info")]
     ])
 
-def task_type_keyboard(task_types: List[str]): # ИЗМЕНЕНО
+def task_type_keyboard(task_types: List[str]):
     """Создает клавиатуру для выбора типа задания и добавляет кнопку получения по ID."""
     buttons = []
-    for title in task_types: # ИЗМЕНЕНО
+    for title in task_types:
         buttons.append([InlineKeyboardButton(text=title, callback_data=f"select_task_{title}")])
     
-    # Добавляем новые кнопки внизу
     buttons.append([InlineKeyboardButton(text="🔎 Найти по ID", callback_data="get_task_by_id_prompt")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -73,11 +72,20 @@ def back_to_main_menu_keyboard():
 def admin_menu_keyboard():
     """Возвращает клавиатуру главного меню админ-панели."""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Редактировать промпты", callback_data="admin_edit_prompts")],
         [InlineKeyboardButton(text="💰 Изменить цены", callback_data="admin_edit_prices")],
         [InlineKeyboardButton(text="👑 Администраторы", callback_data="admin_manage_admins")],
         [InlineKeyboardButton(text="👥 Пользователи с подпиской", callback_data="admin_view_subscribed")],
         [InlineKeyboardButton(text="⬅️ Выйти из админ-панели", callback_data="main_menu")]
     ])
+
+def prompt_types_keyboard(task_types: List[str]):
+    """Создает клавиатуру для выбора типа промпта для редактирования."""
+    buttons = []
+    for task_type in task_types:
+        buttons.append([InlineKeyboardButton(text=task_type, callback_data=f"edit_prompt_{task_type}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def back_to_admin_menu_keyboard():
     """Возвращает клавиатуру с кнопкой 'Назад' в меню администратора."""
