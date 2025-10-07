@@ -1,14 +1,11 @@
 # task_manager.py
 
 import pandas as pd
-import yaml
 import random
 from typing import List, Dict, Optional, Tuple
 
 TASKS_FILE = 'tasks.xlsx'
-PROMPTS_FILE = 'prompts.yml'
 tasks_data = {}
-prompts_data = {}
 
 def clean_header(header):
     if isinstance(header, str):
@@ -16,30 +13,21 @@ def clean_header(header):
     return header
 
 def load_data():
-    """Загружает задания и промпты из файлов."""
-    global tasks_data, prompts_data
+    """Загружает задания и промпты из файла tasks.xlsx."""
+    global tasks_data
     
-    # Загрузка промптов
-    try:
-        with open(PROMPTS_FILE, 'r', encoding='utf-8') as f:
-            prompts_data = yaml.safe_load(f)
-        print(f"Файл с промптами ({PROMPTS_FILE}) успешно загружен.")
-    except FileNotFoundError:
-        print(f"ОШИБКА: Файл с промптами '{PROMPTS_FILE}' не найден.")
-        prompts_data = {}
-    except Exception as e:
-        print(f"ОШИБКА: Не удалось прочитать файл '{PROMPTS_FILE}'. Ошибка: {e}")
-        prompts_data = {}
-
-    # Загрузка заданий
     try:
         xls = pd.ExcelFile(TASKS_FILE)
         tasks_data.clear()
 
         for sheet_name in xls.sheet_names:
             try:
-                # Теперь читаем заголовки из ПЕРВОЙ строки (header=0)
-                df = pd.read_excel(xls, sheet_name=sheet_name, header=0, dtype=str)
+                # Читаем первую строку для получения промпта
+                prompt_df = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=1)
+                prompt = prompt_df.iloc[0, 0] if not prompt_df.empty else "Промпт не найден."
+
+                # Теперь читаем заголовки из ВТОРОЙ строки (header=1)
+                df = pd.read_excel(xls, sheet_name=sheet_name, header=1, dtype=str)
                 df.columns = [clean_header(col) for col in df.columns]
                 
                 if 'task_text' not in df.columns:
@@ -50,7 +38,7 @@ def load_data():
                     df = df.rename(columns={'time': 'time_limit'})
 
                 df = df.where(pd.notna(df), None)
-                tasks_data[sheet_name] = {"tasks": df.to_dict('records')}
+                tasks_data[sheet_name] = {"tasks": df.to_dict('records'), "prompt": prompt}
             
             except Exception as e:
                 print(f"ОШИБКА: Не удалось обработать лист '{sheet_name}'. Ошибка: {e}")
@@ -68,11 +56,10 @@ def get_task_types() -> List[str]:
 
 def get_random_task(task_type: str) -> Optional[Tuple[str, Dict]]:
     category = tasks_data.get(task_type)
-    prompt = prompts_data.get(task_type, "Промпт не найден.")
-    
     if not category or not category.get("tasks"):
-        return prompt, None
+        return None, None
     
+    prompt = category.get("prompt", "Промпт не найден.")
     tasks = []
     for task in category["tasks"]:
         time_limit_str = task.get('time_limit')
@@ -84,26 +71,13 @@ def get_random_task(task_type: str) -> Optional[Tuple[str, Dict]]:
 
 def get_task_by_id(task_id: str) -> Optional[Tuple[str, Dict]]:
     for task_type, category_data in tasks_data.items():
-        prompt = prompts_data.get(task_type, "Промпт не найден.")
+        prompt = category_data.get("prompt", "Промпт не найден.")
         for task in category_data.get("tasks", []):
             if str(task.get("id")) == str(task_id):
                 time_limit_str = task.get('time_limit')
                 task['time_limit'] = int(float(time_limit_str)) if time_limit_str and str(time_limit_str).replace('.', '', 1).isdigit() else None
                 return prompt, task
     return None, None
-
-def get_prompt(task_type: str) -> str:
-    return prompts_data.get(task_type, "Промпт для этого типа не найден.")
-
-def save_prompt(task_type: str, new_text: str):
-    prompts_data[task_type] = new_text
-    try:
-        with open(PROMPTS_FILE, 'w', encoding='utf-8') as f:
-            yaml.dump(prompts_data, f, allow_unicode=True, sort_keys=False)
-        return True
-    except Exception as e:
-        print(f"Ошибка сохранения промпта: {e}")
-        return False
 
 # Загружаем данные один раз при старте бота
 load_data()

@@ -34,7 +34,7 @@ class AdminState(StatesGroup):
     waiting_for_new_price = State()
     waiting_for_admin_id_to_add = State()
     waiting_for_admin_id_to_remove = State()
-    waiting_for_new_prompt = State()
+    # waiting_for_new_prompt = State() # <-- Этот стейт больше не нужен
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def split_message(text: str, chunk_size: int = 4000):
@@ -103,7 +103,8 @@ async def send_main_menu(message: types.Message, user_id: int):
     )
 
 async def send_task(message: types.Message, state: FSMContext, task_data: dict, prompt: str):
-    await db.use_task(message.from_user.id)
+    # ИЗМЕНЕНИЕ: Убрали списание попытки отсюда
+    # await db.use_task(message.from_user.id) 
     
     await state.update_data(
         current_task_text=task_data.get('task_text'), 
@@ -353,33 +354,34 @@ async def voice_message_handler(message: Message, state: FSMContext):
         task_text = user_data.get('current_task_text', 'Задание не найдено.')
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
-        
-        cleaned_review = clean_ai_response(review)
-        escaped_review = escape_markdown(cleaned_review)
-        
-        await message.answer("📝 *Ваш разбор ответа:*", parse_mode="MarkdownV2")
-        
-        for chunk in split_message(escaped_review):
-            await message.answer(chunk, parse_mode="MarkdownV2")
-            await asyncio.sleep(0.5)
 
-        await send_main_menu(message, message.from_user.id)
-        
-    except TelegramBadRequest as e:
-        print(f"ОШИБКА: Не удалось отправить отформатированный ответ Gemini: {e}.")
-        print("--- AI Response (Raw, Caused Error) ---")
-        print(review)
-        print("---------------------------------------")
-        
-        if "message is too long" in str(e).lower():
-            await message.answer(
-                "⚠️ *Ошибка:* Ответ от AI получился слишком большим, даже для отправки по частям. Попробуйте дать более короткий ответ.",
-                parse_mode="MarkdownV2"
-            )
+        # ИЗМЕНЕНИЕ: Проверяем, не вернул ли AI ошибку
+        if "Бот сейчас перегружен" in review:
+            await message.answer(review) # Отправляем пользователю сообщение об ошибке
+            # Попытка НЕ списывается
         else:
-            await message.answer(
-                f"📝 Ваш разбор ответа (ошибка форматирования):\n\n{review}"
-            )
+            # ИЗМЕНЕНИЕ: Списываем попытку ТОЛЬКО при успешном ответе от AI
+            await db.use_task(message.from_user.id)
+            
+            cleaned_review = clean_ai_response(review)
+            
+            await message.answer("📝 *Ваш разбор ответа:*", parse_mode="MarkdownV2")
+            
+            try:
+                escaped_review = escape_markdown(cleaned_review)
+                for chunk in split_message(escaped_review):
+                    await message.answer(chunk, parse_mode="MarkdownV2")
+                    await asyncio.sleep(0.5)
+            except TelegramBadRequest as e:
+                print(f"ОШИБКА: Не удалось отправить отформатированный ответ Gemini: {e}.")
+                print("--- AI Response (Raw, Caused Error) ---")
+                print(review)
+                print("---------------------------------------")
+                await message.answer("⚠️ *Ошибка форматирования ответа.* Отправляю как обычный текст:", parse_mode="MarkdownV2")
+                for chunk in split_message(review):
+                    await message.answer(chunk)
+                    await asyncio.sleep(0.5)
+
         await send_main_menu(message, message.from_user.id)
         
     finally:
@@ -392,7 +394,6 @@ async def incorrect_message_handler(message: Message):
     await message.answer(get_text('voice_error'))
     
 # --- АДМИН-ПАНЕЛЬ ---
-
 @router.message(Command(ADMIN_PASSWORD))
 async def admin_login(message: Message, state: FSMContext):
     if await is_admin(message.from_user.id):
@@ -407,67 +408,7 @@ async def show_admin_menu(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(get_text('admin_welcome'), reply_markup=kb.admin_menu_keyboard())
     await callback.answer()
 
-# --- РЕДАКТИРОВАНИЕ ПРОМПТОВ (НОВЫЙ БЛОК) ---
-
-@router.callback_query(F.data == "admin_edit_prompts")
-async def admin_edit_prompts_start(callback: CallbackQuery):
-    task_types = tm.get_task_types()
-    if not task_types:
-        await callback.answer("Не найдены типы заданий для редактирования.", show_alert=True)
-        return
-    await callback.message.edit_text(
-        "Выберите, для какого типа заданий вы хотите изменить промпт:",
-        reply_markup=kb.prompt_types_keyboard(task_types)
-    )
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("edit_prompt_"))
-async def admin_select_prompt_to_edit(callback: CallbackQuery, state: FSMContext):
-    task_type = callback.data[len("edit_prompt_"):]
-    current_prompt = tm.get_prompt(task_type)
-    
-    await state.update_data(prompt_task_type=task_type)
-    await state.set_state(AdminState.waiting_for_new_prompt)
-    
-    header = f"Текущий промпт для *{escape_markdown(task_type)}*:\n\n"
-    prompt_body = f"```\n{escape_markdown(current_prompt)}\n```\n\n"
-    footer = "Пришлите новый текст промпта."
-    
-    full_message = header + prompt_body + footer
-    
-    try:
-        await callback.message.edit_text(full_message, parse_mode="MarkdownV2")
-    except TelegramBadRequest:
-        await callback.message.delete()
-        await callback.message.answer(header, parse_mode="MarkdownV2")
-        for chunk in split_message(prompt_body):
-            await callback.message.answer(chunk, parse_mode="MarkdownV2")
-        await callback.message.answer(footer)
-
-    await callback.answer()
-
-@router.message(AdminState.waiting_for_new_prompt, F.text)
-async def admin_receive_new_prompt(message: Message, state: FSMContext):
-    user_data = await state.get_data()
-    task_type = user_data.get('prompt_task_type')
-    new_prompt_text = message.text
-
-    if tm.save_prompt(task_type, new_prompt_text):
-        await message.answer(
-            f"✅ Промпт для типа *{escape_markdown(task_type)}* успешно обновлен!",
-            parse_mode="MarkdownV2",
-            reply_markup=kb.admin_menu_keyboard()
-        )
-    else:
-        await message.answer(
-            "❌ Произошла ошибка при сохранении промпта.",
-            reply_markup=kb.admin_menu_keyboard()
-        )
-    
-    await state.clear()
-
 # --- РЕДАКТИРОВАНИЕ ЦЕН ---
-
 @router.callback_query(F.data == "admin_edit_prices")
 async def admin_edit_prices_start(callback: CallbackQuery):
     prices = load_prices()
@@ -502,7 +443,6 @@ async def admin_receive_new_price(message: Message, state: FSMContext):
     await message.answer(f"Цена для тарифа '{tariff}' успешно изменена на {new_price} RUB.", reply_markup=kb.admin_menu_keyboard())
 
 # --- УПРАВЛЕНИЕ АДМИНИСТРАТОРАМИ ---
-
 @router.callback_query(F.data == "admin_manage_admins")
 async def admin_management_menu(callback: CallbackQuery):
     await callback.message.edit_text("Меню управления администраторами:", reply_markup=kb.admin_management_keyboard())
@@ -592,3 +532,9 @@ async def view_subscribed_users(callback: CallbackQuery):
             text += f"  *Подписка до:* {safe_end_date}\n\n"
     await callback.message.edit_text(text, parse_mode='MarkdownV2', reply_markup=kb.back_to_admin_menu_keyboard())
     await callback.answer()
+
+# ИЗМЕНЕНИЕ: Обработчик для всех остальных текстовых сообщений
+@router.message(F.text)
+async def handle_unknown_text(message: Message):
+    """Handles any text message that isn't a known command."""
+    await message.answer(get_text('unknown_command_instruction'))
