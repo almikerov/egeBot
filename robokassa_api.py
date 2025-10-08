@@ -7,29 +7,30 @@ from config import ROBOKASSA_MERCHANT_LOGIN
 
 # --- ГЛАВНЫЙ ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМА ---
 # 1 = Тестовый режим, 0 = Боевой режим
-# Устанавливаем тестовый режим, как вы и просили.
+# Устанавливаем тестовый режим по умолчанию для отладки.
 IS_TEST = 1
 
 def generate_payment_link(user_id: int, amount: int, invoice_id: int, password_1: str) -> str:
     """
     Генерирует ссылку на оплату с правильной подписью.
-    Принимает все необходимые данные как аргументы.
+    Принимает все необходимые данные как аргументы для максимальной прозрачности.
     """
     description = "Подписка на AI-репетитора"
 
-    # Формируем строку для подписи. Все shp_ параметры должны быть включены.
+    # Важно: все дополнительные параметры (shp_) должны быть включены в подпись.
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{amount}:{invoice_id}:{password_1}:shp_user={user_id}"
     signature_hash = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
 
-    print("\n--- ГЕНЕРАЦИЯ ССЫЛКИ НА ОПЛАТУ ---")
+    print("\n--- [ROBOKASSA LOG] ГЕНЕРАЦИЯ ССЫЛКИ НА ОПЛАТУ ---")
+    print(f"РЕЖИМ: {'ТЕСТОВЫЙ' if IS_TEST == 1 else 'БОЕВОЙ'}")
     print(f"ЛОГИН: {ROBOKASSA_MERCHANT_LOGIN}")
     print(f"СУММА: {amount}")
-    print(f"НОМЕР СЧЕТА: {invoice_id}")
-    print(f"ПАРОЛЬ #1: ...{password_1[-4:]}")
+    print(f"НОМЕР СЧЕТА (InvId): {invoice_id}")
+    print(f"ПАРОЛЬ #1 (для генерации): ...{password_1[-4:]}")
     print(f"shp_user: {user_id}")
     print(f"СТРОКА ДЛЯ ПОДПИСИ: {signature_str}")
     print(f"ПОДПИСЬ (MD5): {signature_hash}")
-    print("-------------------------------------\n")
+    print("---------------------------------------------------\n")
 
     link = (
         f"https://auth.robokassa.ru/Merchant/Index.aspx?"
@@ -48,10 +49,12 @@ async def check_payment(invoice_id: int, user_id: int, password_2: str) -> bool:
     Проверяет статус оплаты счета через XML интерфейс Робокассы.
     Принимает все необходимые данные как аргументы.
     """
-    # Формируем строку для подписи. Все shp_ параметры, которые были при создании, должны быть и здесь.
+    # Важно: подпись для проверки должна содержать те же shp_ параметры, что и при создании.
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{invoice_id}:{password_2}:shp_user={user_id}"
     signature_hash = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
 
+    # В URL для проверки подписи IsTest не передается, он определяется на стороне Робокассы
+    # по типу используемых паролей.
     url = (
         f"https://auth.robokassa.ru/Merchant/WebService/Service.asmx/OpState?"
         f"MerchantLogin={ROBOKASSA_MERCHANT_LOGIN}&"
@@ -59,24 +62,25 @@ async def check_payment(invoice_id: int, user_id: int, password_2: str) -> bool:
         f"Signature={signature_hash}"
     )
 
-    print("\n--- ПРОВЕРКА СТАТУСА ПЛАТЕЖА ---")
+    print("\n--- [ROBOKASSA LOG] ПРОВЕРКА СТАТУСА ПЛАТЕЖА ---")
+    print(f"РЕЖИМ: {'ТЕСТОВЫЙ' if IS_TEST == 1 else 'БОЕВОЙ'}")
     print(f"ЛОГИН: {ROBOKASSA_MERCHANT_LOGIN}")
-    print(f"НОМЕР СЧЕТА: {invoice_id}")
-    print(f"ПАРОЛЬ #2: ...{password_2[-4:]}")
+    print(f"НОМЕР СЧЕТА (InvId): {invoice_id}")
+    print(f"ПАРОЛЬ #2 (для проверки): ...{password_2[-4:]}")
     print(f"shp_user: {user_id}")
     print(f"СТРОКА ДЛЯ ПОДПИСИ: {signature_str}")
     print(f"ПОДПИСЬ (MD5): {signature_hash}")
     print(f"URL ДЛЯ ЗАПРОСА: {url}")
-    print("------------------------------------\n")
+    print("----------------------------------------------------\n")
 
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(url) as response:
                 text_response = (await response.text()).lstrip('\ufeff')
-                print(f"ПОЛУЧЕН ОТВЕТ ОТ ROBOKASSA (RAW XML):\n{text_response}\n")
+                print(f"[ROBOKASSA LOG] ПОЛУЧЕН ОТВЕТ (RAW XML):\n{text_response}\n")
 
                 if response.status != 200:
-                    print(f"ОШИБКА: Robokassa вернула статус {response.status}")
+                    print(f"[ROBOKASSA LOG] ОШИБКА: Robokassa вернула HTTP статус {response.status}")
                     return False
 
                 root = ET.fromstring(text_response)
@@ -84,17 +88,19 @@ async def check_payment(invoice_id: int, user_id: int, password_2: str) -> bool:
                 
                 result_code_element = root.find("ns:Result/ns:Code", namespace)
                 if result_code_element is None or result_code_element.text != '0':
-                    error_desc = root.find("ns:Result/ns:Description", namespace).text
-                    print(f"ОШИБКА В ОТВЕТЕ ROBOKASSA: Код {result_code_element.text if result_code_element is not None else 'N/A'} - {error_desc}")
+                    error_desc_element = root.find("ns:Result/ns:Description", namespace)
+                    error_desc = error_desc_element.text if error_desc_element is not None else "Нет описания"
+                    print(f"[ROBOKASSA LOG] ОШИБКА В ОТВЕТЕ: Код {result_code_element.text if result_code_element is not None else 'N/A'} - {error_desc}")
                     return False
 
                 state_code_element = root.find("ns:State/ns:Code", namespace)
                 if state_code_element is not None and state_code_element.text == '100':
-                    print("УСПЕХ: Платеж подтвержден (код 100).")
+                    print("[ROBOKASSA LOG] УСПЕХ: Платеж подтвержден (код 100).")
                     return True
                 else:
-                    print(f"ИНФО: Платеж еще не подтвержден. Код статуса: {state_code_element.text if state_code_element is not None else 'N/A'}")
+                    status_code = state_code_element.text if state_code_element is not None else 'N/A'
+                    print(f"[ROBOKASSA LOG] ИНФО: Платеж еще не подтвержден. Текущий код статуса: {status_code}")
                     return False
         except Exception as e:
-            print(f"КРИТИЧЕСКАЯ ОШИБКА при проверке платежа: {e}")
+            print(f"[ROBOKASSA LOG] КРИТИЧЕСКАЯ ОШИБКА при запросе/парсинге: {e}")
             return False

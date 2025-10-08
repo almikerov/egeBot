@@ -39,6 +39,7 @@ class AdminState(StatesGroup):
     waiting_for_admin_id_to_remove = State()
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+# ... (остальные вспомогательные функции без изменений) ...
 def split_message(text: str, chunk_size: int = 4000):
     if len(text) <= chunk_size:
         yield text
@@ -126,7 +127,7 @@ async def send_task(message: types.Message, state: FSMContext, task_data: dict, 
         print(f"Ошибка отправки медиа: {e}. Отправляю только текст.")
         await message.answer(full_task_text, parse_mode="MarkdownV2")
 
-# --- Обработчики основного меню и команд ---
+# --- Основные обработчики ---
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
@@ -165,12 +166,10 @@ async def show_offer_text(callback: CallbackQuery):
     except FileNotFoundError:
         await callback.answer(get_text('offer_unavailable'), show_alert=True)
 
-# --- Раздел "Подписка и оплата" ---
+# --- Раздел "Подписка и оплата" (ПОЛНОСТЬЮ ПЕРЕДЕЛАН) ---
 @router.callback_query(F.data == "show_subscribe_options")
 async def show_subscribe_menu(callback: CallbackQuery, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state == UserState.waiting_for_payment_check:
-        await state.clear()
+    await state.clear() # На всякий случай сбрасываем состояние
     prices = load_prices()
     await callback.message.edit_text(
         get_text('subscribe_prompt'),
@@ -184,18 +183,25 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     tariff = callback.data.split("_")[1]
     prices = load_prices()
     amount = prices.get(tariff)
+
     if not amount:
-        return await callback.answer("Тариф не найден.", show_alert=True)
+        await callback.answer("Тариф не найден.", show_alert=True)
+        return
 
     invoice_id = await db.add_pending_payment(user_id, tariff, amount)
     if not invoice_id:
-        return await callback.answer("Не удалось создать счет. Попробуйте позже.", show_alert=True)
+        await callback.answer("Не удалось создать счет в базе данных. Попробуйте позже.", show_alert=True)
+        return
 
-    # ИСПРАВЛЕНО: Определяем, какой пароль использовать (тестовый или боевой)
+    # Явно выбираем нужный пароль в зависимости от режима в robokassa_api
     password_1 = ROBOKASSA_TEST_PASSWORD_1 if robokassa_api.IS_TEST == 1 else ROBOKASSA_PASSWORD_1
-    
-    # ИСПРАВЛЕНО: Передаем пароль в функцию
-    payment_link = robokassa_api.generate_payment_link(user_id, amount, invoice_id, password_1)
+
+    payment_link = robokassa_api.generate_payment_link(
+        user_id=user_id,
+        amount=amount,
+        invoice_id=invoice_id,
+        password_1=password_1
+    )
 
     await state.update_data(invoice_id=invoice_id)
     await state.set_state(UserState.waiting_for_payment_check)
@@ -210,32 +216,41 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
 async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMContext):
     state_data = await state.get_data()
     invoice_id = state_data.get('invoice_id')
+
     if not invoice_id:
-        await callback.answer("Ошибка: сессия проверки истекла.", show_alert=True)
+        await callback.answer("Ошибка: сессия проверки истекла. Пожалуйста, выберите тариф заново.", show_alert=True)
         await show_subscribe_menu(callback, state)
         return
 
+    # Мы не можем доверять user_id из callback, так как проверку может нажать кто угодно.
+    # Берем user_id из нашей базы данных по номеру счета.
     payment_data = await db.get_pending_payment(invoice_id)
     if not payment_data:
-        await callback.answer("Ошибка: не удалось найти счет.", show_alert=True)
+        await callback.answer("Ошибка: счет не найден или уже обработан.", show_alert=True)
         await show_subscribe_menu(callback, state)
         return
 
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
 
-    # Определяем, какой пароль использовать для проверки
+    # Явно выбираем нужный пароль для проверки
     password_2 = ROBOKASSA_TEST_PASSWORD_2 if robokassa_api.IS_TEST == 1 else ROBOKASSA_PASSWORD_2
-    
-    # Передаем все необходимые данные в функцию
-    is_paid = await robokassa_api.check_payment(invoice_id=invoice_id, user_id=user_id, password_2=password_2)
 
+    # Передаем все данные, необходимые для формирования правильной подписи
+    is_paid = await robokassa_api.check_payment(
+        invoice_id=invoice_id,
+        user_id=user_id,
+        password_2=password_2
+    )
+    
+    # Удаляем старое сообщение с кнопками в любом случае
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.delete()
 
     if is_paid:
         await state.clear()
         await db.remove_pending_payment(invoice_id)
+        
         if tariff in ["week", "month"]:
             days = 7 if tariff == "week" else 30
             await db.set_subscription(user_id, days)
@@ -243,13 +258,17 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
         elif tariff == "single":
             await db.add_single_tasks(user_id, 1)
             await callback.message.answer(get_text('payment_success_single'))
+        
         await send_main_menu(callback.message, user_id)
     else:
+        # Возвращаем пользователя к сообщению с кнопками "Попробовать еще раз"
         await callback.message.answer(
             get_text('payment_failed'),
             reply_markup=kb.payment_failed_keyboard()
         )
 
+# --- Остальные обработчики без изменений ---
+# ... (скопируйте сюда все остальные обработчики из вашего файла handlers.py) ...
 # --- ЛОГИКА ПОЛУЧЕНИЯ И ПРОВЕРКИ ЗАДАНИЙ ---
 
 async def check_user_can_get_task(user_id: int, message: types.Message) -> bool:
