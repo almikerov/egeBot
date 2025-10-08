@@ -7,27 +7,18 @@ from config import ROBOKASSA_MERCHANT_LOGIN
 
 # --- ГЛАВНЫЙ ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМА ---
 # 1 = Тестовый режим, 0 = Боевой режим
-# Устанавливаем тестовый режим по умолчанию для отладки.
 IS_TEST = 1
 
 def generate_payment_link(user_id: int, amount: int, invoice_id: int, password_1: str) -> str:
     """
     Генерирует ссылку на оплату с правильной подписью.
-    Принимает все необходимые данные как аргументы для максимальной прозрачности.
     """
     description = "Подписка на AI-репетитора"
-
-    # Важно: все дополнительные параметры (shp_) должны быть включены в подпись.
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{amount}:{invoice_id}:{password_1}:shp_user={user_id}"
     signature_hash = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
 
     print("\n--- [ROBOKASSA LOG] ГЕНЕРАЦИЯ ССЫЛКИ НА ОПЛАТУ ---")
     print(f"РЕЖИМ: {'ТЕСТОВЫЙ' if IS_TEST == 1 else 'БОЕВОЙ'}")
-    print(f"ЛОГИН: {ROBOKASSA_MERCHANT_LOGIN}")
-    print(f"СУММА: {amount}")
-    print(f"НОМЕР СЧЕТА (InvId): {invoice_id}")
-    print(f"ПАРОЛЬ #1 (для генерации): ...{password_1[-4:]}")
-    print(f"shp_user: {user_id}")
     print(f"СТРОКА ДЛЯ ПОДПИСИ: {signature_str}")
     print(f"ПОДПИСЬ (MD5): {signature_hash}")
     print("---------------------------------------------------\n")
@@ -47,27 +38,21 @@ def generate_payment_link(user_id: int, amount: int, invoice_id: int, password_1
 async def check_payment(invoice_id: int, user_id: int, password_2: str) -> bool:
     """
     Проверяет статус оплаты счета через XML интерфейс Робокассы.
-    Принимает все необходимые данные как аргументы.
     """
-    # Важно: подпись для проверки должна содержать те же shp_ параметры, что и при создании.
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{invoice_id}:{password_2}:shp_user={user_id}"
     signature_hash = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
 
-    # В URL для проверки подписи IsTest не передается, он определяется на стороне Робокассы
-    # по типу используемых паролей.
+    # ИСПРАВЛЕНО: Добавлен параметр IsTest в URL для проверки
     url = (
         f"https://auth.robokassa.ru/Merchant/WebService/Service.asmx/OpState?"
         f"MerchantLogin={ROBOKASSA_MERCHANT_LOGIN}&"
         f"InvoiceID={invoice_id}&"
-        f"Signature={signature_hash}"
+        f"Signature={signature_hash}&"
+        f"IsTest={IS_TEST}"  # <--- ВОТ ИСПРАВЛЕНИЕ
     )
 
     print("\n--- [ROBOKASSA LOG] ПРОВЕРКА СТАТУСА ПЛАТЕЖА ---")
     print(f"РЕЖИМ: {'ТЕСТОВЫЙ' if IS_TEST == 1 else 'БОЕВОЙ'}")
-    print(f"ЛОГИН: {ROBOKASSA_MERCHANT_LOGIN}")
-    print(f"НОМЕР СЧЕТА (InvId): {invoice_id}")
-    print(f"ПАРОЛЬ #2 (для проверки): ...{password_2[-4:]}")
-    print(f"shp_user: {user_id}")
     print(f"СТРОКА ДЛЯ ПОДПИСИ: {signature_str}")
     print(f"ПОДПИСЬ (MD5): {signature_hash}")
     print(f"URL ДЛЯ ЗАПРОСА: {url}")
