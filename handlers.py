@@ -23,6 +23,7 @@ from price_manager import load_prices, save_prices
 
 router = Router()
 
+# Классы состояний
 class UserState(StatesGroup):
     waiting_for_voice = State()
     waiting_for_payment_check = State()
@@ -33,7 +34,7 @@ class AdminState(StatesGroup):
     waiting_for_admin_id_to_add = State()
     waiting_for_admin_id_to_remove = State()
 
-# ... (все вспомогательные функции остаются без изменений) ...
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def split_message(text: str, chunk_size: int = 4000):
     if len(text) <= chunk_size:
         yield text
@@ -181,7 +182,7 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     if not invoice_id:
         return await callback.answer("Не удалось создать счет.", show_alert=True)
 
-    # Функция сама выберет нужный пароль
+    # Вызываем упрощенную функцию, которая сама выберет пароль
     payment_link = robokassa_api.generate_payment_link(
         amount=amount,
         invoice_id=invoice_id
@@ -212,7 +213,7 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
 
-    # Функция сама выберет нужный пароль
+    # Вызываем упрощенную функцию, которая сама выберет пароль
     is_paid = await robokassa_api.check_payment(invoice_id=invoice_id)
     
     with contextlib.suppress(TelegramBadRequest):
@@ -235,7 +236,6 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
             reply_markup=kb.payment_failed_keyboard()
         )
 
-# ... (остальной код handlers.py без изменений) ...
 async def check_user_can_get_task(user_id: int, message: types.Message) -> bool:
     tasks_info = await db.get_available_tasks(user_id)
     if not (tasks_info["is_subscribed"] or tasks_info["trials_left"] > 0 or tasks_info["single_left"] > 0):
