@@ -56,10 +56,10 @@ async def db_start():
         )
     """)
     
-    # Добавлен столбец created_at для отслеживания времени создания счета
+    # ИЗМЕНЕНО: invoice_id теперь TEXT для предотвращения переполнения
     cur.execute("""
         CREATE TABLE IF NOT EXISTS pending_payments (
-            invoice_id INTEGER PRIMARY KEY,
+            invoice_id TEXT PRIMARY KEY,
             user_id INTEGER,
             tariff TEXT,
             amount INTEGER,
@@ -75,7 +75,7 @@ async def db_start():
     db.commit()
     db.close()
 
-async def add_pending_payment(invoice_id: int, user_id: int, tariff: str, amount: int):
+async def add_pending_payment(invoice_id: str, user_id: int, tariff: str, amount: int):
     """Добавляет информацию о новом счете в базу данных."""
     db = sq.connect('users.db')
     cur = db.cursor()
@@ -88,7 +88,7 @@ async def add_pending_payment(invoice_id: int, user_id: int, tariff: str, amount
     db.commit()
     db.close()
 
-async def get_pending_payment(invoice_id: int) -> Optional[tuple]:
+async def get_pending_payment(invoice_id: str) -> Optional[tuple]:
     """Получает информацию о счете из базы данных."""
     db = sq.connect('users.db')
     cur = db.cursor()
@@ -97,7 +97,7 @@ async def get_pending_payment(invoice_id: int) -> Optional[tuple]:
     db.close()
     return payment_data
 
-async def remove_pending_payment(invoice_id: int):
+async def remove_pending_payment(invoice_id: str):
     """Удаляет информацию о счете после успешной оплаты."""
     db = sq.connect('users.db')
     cur = db.cursor()
