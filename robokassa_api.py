@@ -3,24 +3,39 @@
 import hashlib
 import aiohttp
 import xml.etree.ElementTree as ET
-from config import ROBOKASSA_MERCHANT_LOGIN
+from config import (
+    ROBOKASSA_MERCHANT_LOGIN,
+    ROBOKASSA_PASSWORD_1,
+    ROBOKASSA_PASSWORD_2,
+    ROBOKASSA_TEST_PASSWORD_1,
+    ROBOKASSA_TEST_PASSWORD_2
+)
 
 # --- ГЛАВНЫЙ ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМА ---
 # 1 = Тестовый режим, 0 = Боевой режим
 IS_TEST = 1
 
-def generate_payment_link(amount: int, invoice_id: int, password_1: str) -> str:
-    """
-    Генерирует ссылку на оплату БЕЗ дополнительных параметров (shp_).
-    """
-    description = "Подписка на AI-репетитора"
+def _get_credentials():
+    """Возвращает правильные пароли в зависимости от режима."""
+    if IS_TEST == 1:
+        print("[ROBOKASSA LOG] Используются ТЕСТОВЫЕ пароли.")
+        return ROBOKASSA_TEST_PASSWORD_1, ROBOKASSA_TEST_PASSWORD_2
+    else:
+        print("[ROBOKASSA LOG] Используются БОЕВЫЕ пароли.")
+        return ROBOKASSA_PASSWORD_1, ROBOKASSA_PASSWORD_2
 
-    # Упрощенная подпись без shp_ параметров
+def generate_payment_link(amount: int, invoice_id: int) -> str:
+    """
+    Генерирует ссылку на оплату. Автоматически выбирает нужный пароль.
+    """
+    password_1, _ = _get_credentials()
+    description = "Подписка на AI-репетитора"
+    
+    # Упрощенная подпись без shp_ параметров для максимальной надежности
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{amount}:{invoice_id}:{password_1}"
     signature_hash = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
 
-    print("\n--- [ROBOKASSA LOG] ГЕНЕРАЦИЯ ССЫЛКИ (УПРОЩЕННАЯ) ---")
-    print(f"РЕЖИМ: {'ТЕСТОВЫЙ' if IS_TEST == 1 else 'БОЕВОЙ'}")
+    print("\n--- [ROBOKASSA LOG] ГЕНЕРАЦИЯ ССЫЛКИ НА ОПЛАТУ ---")
     print(f"СТРОКА ДЛЯ ПОДПИСИ: {signature_str}")
     print(f"ПОДПИСЬ (MD5): {signature_hash}")
     print("---------------------------------------------------\n")
@@ -36,10 +51,12 @@ def generate_payment_link(amount: int, invoice_id: int, password_1: str) -> str:
     )
     return link
 
-async def check_payment(invoice_id: int, password_2: str) -> bool:
+async def check_payment(invoice_id: int) -> bool:
     """
-    Проверяет статус оплаты счета БЕЗ дополнительных shp_ параметров.
+    Проверяет статус оплаты счета. Автоматически выбирает нужный пароль.
     """
+    _, password_2 = _get_credentials()
+    
     # Упрощенная подпись для проверки
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{invoice_id}:{password_2}"
     signature_hash = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
@@ -52,8 +69,7 @@ async def check_payment(invoice_id: int, password_2: str) -> bool:
         f"IsTest={IS_TEST}"
     )
 
-    print("\n--- [ROBOKASSA LOG] ПРОВЕРКА СТАТУСА (УПРОЩЕННАЯ) ---")
-    print(f"РЕЖИМ: {'ТЕСТОВЫЙ' if IS_TEST == 1 else 'БОЕВОЙ'}")
+    print("\n--- [ROBOKASSA LOG] ПРОВЕРКА СТАТУСА ПЛАТЕЖА ---")
     print(f"СТРОКА ДЛЯ ПОДПИСИ: {signature_str}")
     print(f"ПОДПИСЬ (MD5): {signature_hash}")
     print(f"URL ДЛЯ ЗАПРОСА: {url}")

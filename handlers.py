@@ -17,18 +17,12 @@ import database as db
 import ai_processing
 import robokassa_api
 import task_manager as tm
-from config import (
-    ADMIN_PASSWORD, SUPER_ADMIN_ID,
-    ROBOKASSA_PASSWORD_1, ROBOKASSA_PASSWORD_2,
-    ROBOKASSA_TEST_PASSWORD_1, ROBOKASSA_TEST_PASSWORD_2
-)
+from config import ADMIN_PASSWORD, SUPER_ADMIN_ID
 from text_manager import get_text
 from price_manager import load_prices, save_prices
 
 router = Router()
 
-# ... (все вспомогательные функции остаются без изменений) ...
-# Классы состояний
 class UserState(StatesGroup):
     waiting_for_voice = State()
     waiting_for_payment_check = State()
@@ -39,7 +33,7 @@ class AdminState(StatesGroup):
     waiting_for_admin_id_to_add = State()
     waiting_for_admin_id_to_remove = State()
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+# ... (все вспомогательные функции остаются без изменений) ...
 def split_message(text: str, chunk_size: int = 4000):
     if len(text) <= chunk_size:
         yield text
@@ -127,7 +121,6 @@ async def send_task(message: types.Message, state: FSMContext, task_data: dict, 
         print(f"Ошибка отправки медиа: {e}. Отправляю только текст.")
         await message.answer(full_task_text, parse_mode="MarkdownV2")
 
-# --- Основные обработчики ---
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
@@ -142,7 +135,6 @@ async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     await send_main_menu(callback.message, callback.from_user.id)
     await callback.answer()
 
-# --- Раздел "Информация" ---
 @router.callback_query(F.data == "show_info")
 async def show_info_menu(callback: CallbackQuery):
     status_text = await get_user_status_text(callback.from_user.id)
@@ -166,7 +158,6 @@ async def show_offer_text(callback: CallbackQuery):
     except FileNotFoundError:
         await callback.answer(get_text('offer_unavailable'), show_alert=True)
         
-# --- Раздел "Подписка и оплата" (УПРОЩЕННЫЙ) ---
 @router.callback_query(F.data == "show_subscribe_options")
 async def show_subscribe_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -190,13 +181,10 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     if not invoice_id:
         return await callback.answer("Не удалось создать счет.", show_alert=True)
 
-    password_1 = ROBOKASSA_TEST_PASSWORD_1 if robokassa_api.IS_TEST == 1 else ROBOKASSA_PASSWORD_1
-    
-    # Вызываем упрощенную функцию без user_id
+    # Функция сама выберет нужный пароль
     payment_link = robokassa_api.generate_payment_link(
         amount=amount,
-        invoice_id=invoice_id,
-        password_1=password_1
+        invoice_id=invoice_id
     )
 
     await state.update_data(invoice_id=invoice_id)
@@ -224,13 +212,8 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
 
-    password_2 = ROBOKASSA_TEST_PASSWORD_2 if robokassa_api.IS_TEST == 1 else ROBOKASSA_PASSWORD_2
-    
-    # Вызываем упрощенную функцию проверки
-    is_paid = await robokassa_api.check_payment(
-        invoice_id=invoice_id,
-        password_2=password_2
-    )
+    # Функция сама выберет нужный пароль
+    is_paid = await robokassa_api.check_payment(invoice_id=invoice_id)
     
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.delete()
@@ -252,8 +235,7 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
             reply_markup=kb.payment_failed_keyboard()
         )
 
-# --- Остальная часть файла handlers.py без изменений ---
-# ... (вставьте сюда остаток вашего файла, начиная с "ЛОГИКА ПОЛУЧЕНИЯ И ПРОВЕРКИ ЗАДАНИЙ")
+# ... (остальной код handlers.py без изменений) ...
 async def check_user_can_get_task(user_id: int, message: types.Message) -> bool:
     tasks_info = await db.get_available_tasks(user_id)
     if not (tasks_info["is_subscribed"] or tasks_info["trials_left"] > 0 or tasks_info["single_left"] > 0):
@@ -347,7 +329,6 @@ async def voice_message_handler(message: Message, state: FSMContext):
 async def incorrect_message_handler(message: Message):
     await message.answer(get_text('voice_error'))
 
-# --- АДМИН-ПАНЕЛЬ ---
 @router.message(Command(ADMIN_PASSWORD))
 async def admin_login(message: Message, state: FSMContext):
     if await is_admin(message.from_user.id):
