@@ -42,21 +42,21 @@ def split_message(text: str, chunk_size: int = 4000):
     if len(text) <= chunk_size:
         yield text
         return
-    
+
     last_cut = 0
     while last_cut < len(text):
         next_cut = last_cut + chunk_size
         if next_cut >= len(text):
             yield text[last_cut:]
             break
-            
+
         cut_pos = text.rfind('\n', last_cut, next_cut)
         if cut_pos == -1:
             cut_pos = text.rfind(' ', last_cut, next_cut)
-        
+
         if cut_pos == -1 or cut_pos <= last_cut:
             cut_pos = next_cut
-            
+
         yield text[last_cut:cut_pos]
         last_cut = cut_pos
 
@@ -81,7 +81,7 @@ async def is_admin(user_id: int) -> bool:
 async def get_user_status_text(user_id: int) -> str:
     if await is_admin(user_id):
         return get_text('status_admin')
-    
+
     is_subscribed, end_date = await db.check_subscription(user_id)
     if is_subscribed:
         if end_date and end_date != "admin":
@@ -105,23 +105,23 @@ async def send_main_menu(message: types.Message, user_id: int):
 async def send_task(message: types.Message, state: FSMContext, task_data: dict, prompt: str):
     # ИЗМЕНЕНИЕ: Убрали списание попытки отсюда
     # await db.use_task(message.from_user.id) 
-    
+
     await state.update_data(
-        current_task_text=task_data.get('task_text'), 
+        current_task_text=task_data.get('task_text'),
         current_prompt=prompt,
         time_limit=task_data.get('time_limit')
     )
     await state.set_state(UserState.waiting_for_voice)
-    
+
     cleaned_task_text = clean_ai_response(task_data.get('task_text', ''))
     escaped_text = escape_markdown(cleaned_task_text)
-    
+
     quoted_task_text = "\n".join([f"> {line}" for line in escaped_text.split('\n')])
-    
+
     safe_task_id = escape_markdown(str(task_data.get('id', 'N/A')))
     task_id_text = f"_\\(ID: {safe_task_id}\\)_"
     instruction_text = "_Запишите и отправьте свой ответ в виде голосового сообщения\\._"
-    
+
     full_task_text = f"*Ваше задание:*\n\n{quoted_task_text}\n\n{task_id_text}\n\n{instruction_text}"
 
     if isinstance(message, CallbackQuery):
@@ -138,7 +138,7 @@ async def send_task(message: types.Message, state: FSMContext, task_data: dict, 
             await message.answer_media_group(media)
         elif image1:
             await message.answer_photo(photo=image1)
-        
+
         await message.answer(full_task_text, parse_mode="MarkdownV2")
 
     except TelegramBadRequest as e:
@@ -211,25 +211,23 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     tariff = callback.data.split("_")[1]
     prices = load_prices()
     amount = prices.get(tariff)
-    if not amount: 
+    if not amount:
         return await callback.answer("Тариф не найден.", show_alert=True)
-    
-    # ИЗМЕНЕНО: Сначала создаем запись в БД и получаем уникальный ID
+
     invoice_id = await db.add_pending_payment(user_id, tariff, amount)
     if not invoice_id:
         return await callback.answer("Не удалось создать счет. Попробуйте позже.", show_alert=True)
 
     payment_link = robokassa_api.generate_payment_link(user_id, amount, invoice_id)
-    
+
     await state.update_data(invoice_id=invoice_id)
     await state.set_state(UserState.waiting_for_payment_check)
-    
+
     await callback.message.edit_text(
         get_text('buy_prompt', tariff=tariff, amount=amount),
         reply_markup=kb.payment_keyboard(payment_link, amount)
     )
     await callback.answer()
-
 
 @router.callback_query(F.data == "check_robokassa_payment", UserState.waiting_for_payment_check)
 async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMContext):
@@ -246,7 +244,9 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
         return
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
-    is_paid = await robokassa_api.check_payment(invoice_id)
+    
+    # ИЗМЕНЕНО: Передаем user_id в функцию проверки
+    is_paid = await robokassa_api.check_payment(invoice_id, user_id)
     
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.delete()
@@ -296,12 +296,12 @@ async def check_user_can_get_task(user_id: int, message: types.Message) -> bool:
 async def get_task_handler(callback: CallbackQuery, state: FSMContext):
     if not await check_user_can_get_task(callback.from_user.id, callback):
         return
-        
+
     task_types = tm.get_task_types()
     if not task_types:
         await callback.answer("Не удалось загрузить типы заданий. Возможно, файл с заданиями пуст.", show_alert=True)
         return
-        
+
     await callback.message.edit_text(
         "Выберите тип задания:",
         reply_markup=kb.task_type_keyboard(task_types)
@@ -339,7 +339,7 @@ async def get_task_by_id_finish_handler(message: Message, state: FSMContext):
         await message.answer(get_text('task_not_found'), reply_markup=kb.back_to_main_menu_keyboard())
         await state.clear()
         return
-    
+
     await send_task(message, state, task_data, prompt)
 
 
@@ -358,23 +358,20 @@ async def voice_message_handler(message: Message, state: FSMContext):
     try:
         voice_file_info = await message.bot.get_file(message.voice.file_id)
         await message.bot.download_file(voice_file_info.file_path, voice_ogg_path)
-        
+
         task_text = user_data.get('current_task_text', 'Задание не найдено.')
         prompt = user_data.get('current_prompt', 'Промпт не найден.')
         review = await ai_processing.get_ai_review(prompt, task_text, voice_ogg_path)
 
-        # ИЗМЕНЕНИЕ: Проверяем, не вернул ли AI ошибку
         if "Бот сейчас перегружен" in review:
-            await message.answer(review) # Отправляем пользователю сообщение об ошибке
-            # Попытка НЕ списывается
+            await message.answer(review)
         else:
-            # ИЗМЕНЕНИЕ: Списываем попытку ТОЛЬКО при успешном ответе от AI
             await db.use_task(message.from_user.id)
-            
+
             cleaned_review = clean_ai_response(review)
-            
+
             await message.answer("📝 *Ваш разбор ответа:*", parse_mode="MarkdownV2")
-            
+
             try:
                 escaped_review = escape_markdown(cleaned_review)
                 for chunk in split_message(escaped_review):
@@ -391,7 +388,7 @@ async def voice_message_handler(message: Message, state: FSMContext):
                     await asyncio.sleep(0.5)
 
         await send_main_menu(message, message.from_user.id)
-        
+
     finally:
         await state.clear()
         if os.path.exists(voice_ogg_path):
@@ -400,7 +397,7 @@ async def voice_message_handler(message: Message, state: FSMContext):
 @router.message(UserState.waiting_for_voice)
 async def incorrect_message_handler(message: Message):
     await message.answer(get_text('voice_error'))
-    
+
 # --- АДМИН-ПАНЕЛЬ ---
 @router.message(Command(ADMIN_PASSWORD))
 async def admin_login(message: Message, state: FSMContext):
