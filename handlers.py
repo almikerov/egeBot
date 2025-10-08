@@ -165,7 +165,7 @@ async def show_offer_text(callback: CallbackQuery):
     except FileNotFoundError:
         await callback.answer(get_text('offer_unavailable'), show_alert=True)
 
-# --- Раздел "Подписка и оплата" (ПЕРЕДЕЛАН) ---
+# --- Раздел "Подписка и оплата" ---
 @router.callback_query(F.data == "show_subscribe_options")
 async def show_subscribe_menu(callback: CallbackQuery, state: FSMContext):
     current_state = await state.get_state()
@@ -191,8 +191,11 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     if not invoice_id:
         return await callback.answer("Не удалось создать счет. Попробуйте позже.", show_alert=True)
 
+    # ИСПРАВЛЕНО: Определяем, какой пароль использовать (тестовый или боевой)
     password_1 = ROBOKASSA_TEST_PASSWORD_1 if robokassa_api.IS_TEST == 1 else ROBOKASSA_PASSWORD_1
-    payment_link = robokassa_api.generate_payment_link(user_id, amount, invoice_id)
+    
+    # ИСПРАВЛЕНО: Передаем пароль в функцию
+    payment_link = robokassa_api.generate_payment_link(user_id, amount, invoice_id, password_1)
 
     await state.update_data(invoice_id=invoice_id)
     await state.set_state(UserState.waiting_for_payment_check)
@@ -221,7 +224,10 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
 
+    # Определяем, какой пароль использовать для проверки
     password_2 = ROBOKASSA_TEST_PASSWORD_2 if robokassa_api.IS_TEST == 1 else ROBOKASSA_PASSWORD_2
+    
+    # Передаем все необходимые данные в функцию
     is_paid = await robokassa_api.check_payment(invoice_id=invoice_id, user_id=user_id, password_2=password_2)
 
     with contextlib.suppress(TelegramBadRequest):
