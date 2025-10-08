@@ -27,6 +27,7 @@ from price_manager import load_prices, save_prices
 
 router = Router()
 
+# ... (все вспомогательные функции остаются без изменений) ...
 # Классы состояний
 class UserState(StatesGroup):
     waiting_for_voice = State()
@@ -164,8 +165,8 @@ async def show_offer_text(callback: CallbackQuery):
         )
     except FileNotFoundError:
         await callback.answer(get_text('offer_unavailable'), show_alert=True)
-
-# --- Раздел "Подписка и оплата" ---
+        
+# --- Раздел "Подписка и оплата" (УПРОЩЕННЫЙ) ---
 @router.callback_query(F.data == "show_subscribe_options")
 async def show_subscribe_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -183,17 +184,16 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     prices = load_prices()
     amount = prices.get(tariff)
     if not amount:
-        await callback.answer("Тариф не найден.", show_alert=True)
-        return
+        return await callback.answer("Тариф не найден.", show_alert=True)
 
     invoice_id = await db.add_pending_payment(user_id, tariff, amount)
     if not invoice_id:
-        await callback.answer("Не удалось создать счет в базе данных.", show_alert=True)
-        return
+        return await callback.answer("Не удалось создать счет.", show_alert=True)
 
     password_1 = ROBOKASSA_TEST_PASSWORD_1 if robokassa_api.IS_TEST == 1 else ROBOKASSA_PASSWORD_1
+    
+    # Вызываем упрощенную функцию без user_id
     payment_link = robokassa_api.generate_payment_link(
-        user_id=user_id,
         amount=amount,
         invoice_id=invoice_id,
         password_1=password_1
@@ -213,23 +213,22 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
     state_data = await state.get_data()
     invoice_id = state_data.get('invoice_id')
     if not invoice_id:
-        await callback.answer("Сессия проверки истекла. Выберите тариф заново.", show_alert=True)
-        await show_subscribe_menu(callback, state)
-        return
+        await callback.answer("Сессия проверки истекла.", show_alert=True)
+        return await show_subscribe_menu(callback, state)
 
     payment_data = await db.get_pending_payment(invoice_id)
     if not payment_data:
-        await callback.answer("Счет не найден или уже обработан.", show_alert=True)
-        await show_subscribe_menu(callback, state)
-        return
+        await callback.answer("Счет не найден.", show_alert=True)
+        return await show_subscribe_menu(callback, state)
 
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
 
     password_2 = ROBOKASSA_TEST_PASSWORD_2 if robokassa_api.IS_TEST == 1 else ROBOKASSA_PASSWORD_2
+    
+    # Вызываем упрощенную функцию проверки
     is_paid = await robokassa_api.check_payment(
         invoice_id=invoice_id,
-        user_id=user_id,
         password_2=password_2
     )
     
@@ -253,7 +252,8 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
             reply_markup=kb.payment_failed_keyboard()
         )
 
-# --- ЛОГИКА ПОЛУЧЕНИЯ И ПРОВЕРКИ ЗАДАНИЙ ---
+# --- Остальная часть файла handlers.py без изменений ---
+# ... (вставьте сюда остаток вашего файла, начиная с "ЛОГИКА ПОЛУЧЕНИЯ И ПРОВЕРКИ ЗАДАНИЙ")
 async def check_user_can_get_task(user_id: int, message: types.Message) -> bool:
     tasks_info = await db.get_available_tasks(user_id)
     if not (tasks_info["is_subscribed"] or tasks_info["trials_left"] > 0 or tasks_info["single_left"] > 0):
