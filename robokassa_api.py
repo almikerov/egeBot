@@ -14,7 +14,7 @@ import database as db
 
 # --- ГЛАВНЫЙ ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМА ---
 # 1 = Тестовый режим, 0 = Боевой режим
-IS_TEST = 0 
+IS_TEST = 1 
 
 def generate_payment_link(user_id: int, amount: int, invoice_id: int) -> str:
     """Генерирует ссылку на оплату, используя правильные пароли."""
