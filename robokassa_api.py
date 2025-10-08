@@ -19,7 +19,7 @@ def generate_payment_link(user_id: int, amount: int, invoice_id: int) -> str:
             f"Description={description}&"
             f"SignatureValue={signature_hash}&"
             f"shp_user={user_id}&"
-            f"IsTest=0") # Оставляем 1 для тестов
+            f"IsTest=1") # Оставляем 1 для тестов
             
     return link
 
