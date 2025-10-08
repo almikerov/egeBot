@@ -21,6 +21,12 @@ def generate_payment_link(user_id: int, amount: int, invoice_id: int) -> str:
     
     password = ROBOKASSA_TEST_PASSWORD_1 if IS_TEST == 1 else ROBOKASSA_PASSWORD_1
     
+    # --- ОТЛАДКА ---
+    print("\n--- ДАННЫЕ ДЛЯ СОЗДАНИЯ ССЫЛКИ ---")
+    print(f"MerchantLogin: '{ROBOKASSA_MERCHANT_LOGIN}'")
+    print(f"Пароль #1 (используется): '{password[:4]}...{password[-4:]}'")
+    print("---------------------------------\n")
+
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{amount}:{invoice_id}:{password}:shp_user={user_id}"
     signature_hash = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
     
@@ -36,10 +42,17 @@ def generate_payment_link(user_id: int, amount: int, invoice_id: int) -> str:
     return link
 
 async def check_payment(invoice_id: int) -> bool:
-    """Проверяет статус оплаты счёта и корректно парсит ответ с неймспейсом."""
+    """Проверяет статус оплаты счёта и логирует абсолютно всё."""
     
     password = ROBOKASSA_TEST_PASSWORD_2 if IS_TEST == 1 else ROBOKASSA_PASSWORD_2
     
+    # --- ОТЛАДКА ---
+    print("\n--- ДАННЫЕ ДЛЯ ПРОВЕРКИ ПЛАТЕЖА ---")
+    print(f"MerchantLogin: '{ROBOKASSA_MERCHANT_LOGIN}'")
+    print(f"Пароль #2 (используется): '{password[:4]}...{password[-4:]}'")
+    print(f"InvoiceID для проверки: {invoice_id}")
+    print("------------------------------------\n")
+
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{invoice_id}:{password}"
     signature_hash = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
     
@@ -48,47 +61,34 @@ async def check_payment(invoice_id: int) -> bool:
            f"InvoiceID={invoice_id}&"
            f"Signature={signature_hash}&"
            f"IsTest={IS_TEST}")
+    
+    # --- ОТЛАДКА ---
+    print(f"URL ДЛЯ ЗАПРОСА ПРОВЕРКИ:\n{url}\n")
            
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(url) as response:
+                text_response = (await response.text()).lstrip('\ufeff')
+                print(f"ПОЛУЧЕН ОТВЕТ ОТ ROBOKASSA:\n{text_response}\n")
+                
+                # ... остальной код парсинга ...
                 if response.status == 200:
-                    # Убираем BOM-символ из начала ответа, если он есть
-                    text_response = (await response.text()).lstrip('\ufeff')
-                    
-                    print("="*50)
-                    print(f"ОТВЕТ ОТ ROBOKASSA ДЛЯ СЧЕТА #{invoice_id}:\n{text_response}")
-                    print("="*50)
-
                     try:
                         root = ET.fromstring(text_response)
-                        
-                        # ИЗМЕНЕНО: Добавляем обработку пространства имен (namespace)
                         namespace = {'ns': 'http://merchant.roboxchange.com/WebService/'}
-                        
                         result_code_element = root.find("ns:Result/ns:Code", namespace)
                         if result_code_element is not None and result_code_element.text != '0':
                             error_desc = root.find("ns:Result/ns:Description", namespace).text
                             print(f"ОШИБКА ОТ ROBOKASSA: Код {result_code_element.text} - {error_desc}")
                             return False
-
                         state_code_element = root.find("ns:State/ns:Code", namespace)
                         if state_code_element is not None and state_code_element.text == '100':
-                            print("Платеж подтвержден (код 100).")
+                            print("УСПЕХ: Платеж подтвержден (код 100).")
                             return True
-                        else:
-                            status_text = state_code_element.text if state_code_element is not None else 'статус не найден'
-                            print(f"Платеж НЕ подтвержден. Текущий статус: {status_text}")
-                            return False
-
-                    except ET.ParseError as e:
-                        print(f"Критическая ошибка: Не удалось распарсить XML от Robokassa: {e}")
-                        return False
-                else:
-                    print(f"Критическая ошибка: Robokassa вернула статус {response.status}")
-                    return False
+                    except Exception as e:
+                        print(f"Критическая ошибка парсинга XML: {e}")
+                return False
         except Exception as e:
-            print(f"Критическая ошибка: Исключение при запросе к Robokassa: {e}")
+            print(f"Критическая ошибка сети: {e}")
             return False
-            
     return False
