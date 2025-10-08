@@ -7,6 +7,7 @@ from config import ROBOKASSA_MERCHANT_LOGIN
 
 # --- ГЛАВНЫЙ ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМА ---
 # 1 = Тестовый режим, 0 = Боевой режим
+# Устанавливаем тестовый режим для отладки.
 IS_TEST = 1
 
 def generate_payment_link(user_id: int, amount: int, invoice_id: int, password_1: str) -> str:
@@ -42,13 +43,13 @@ async def check_payment(invoice_id: int, user_id: int, password_2: str) -> bool:
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{invoice_id}:{password_2}:shp_user={user_id}"
     signature_hash = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
 
-    # ИСПРАВЛЕНО: Добавлен параметр IsTest в URL для проверки
+    # ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Добавлен параметр IsTest в URL для проверки
     url = (
         f"https://auth.robokassa.ru/Merchant/WebService/Service.asmx/OpState?"
         f"MerchantLogin={ROBOKASSA_MERCHANT_LOGIN}&"
         f"InvoiceID={invoice_id}&"
         f"Signature={signature_hash}&"
-        f"IsTest={IS_TEST}"  # <--- ВОТ ИСПРАВЛЕНИЕ
+        f"IsTest={IS_TEST}"  # <--- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ
     )
 
     print("\n--- [ROBOKASSA LOG] ПРОВЕРКА СТАТУСА ПЛАТЕЖА ---")
