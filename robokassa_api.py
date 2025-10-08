@@ -10,6 +10,7 @@ from config import (
     ROBOKASSA_TEST_PASSWORD_1,
     ROBOKASSA_TEST_PASSWORD_2
 )
+import database as db
 
 # --- ГЛАВНЫЙ ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМА ---
 # 1 = Тестовый режим, 0 = Боевой режим
@@ -46,14 +47,23 @@ async def check_payment(invoice_id: int) -> bool:
     
     password = ROBOKASSA_TEST_PASSWORD_2 if IS_TEST == 1 else ROBOKASSA_PASSWORD_2
     
+    # Получаем user_id из базы данных по invoice_id
+    payment_data = await db.get_pending_payment(invoice_id)
+    if not payment_data:
+        print(f"ОШИБКА: Не удалось найти данные для счета #{invoice_id}")
+        return False
+    user_id, _, _ = payment_data
+
     # --- ОТЛАДКА ---
     print("\n--- ДАННЫЕ ДЛЯ ПРОВЕРКИ ПЛАТЕЖА ---")
     print(f"MerchantLogin: '{ROBOKASSA_MERCHANT_LOGIN}'")
     print(f"Пароль #2 (используется): '{password[:4]}...{password[-4:]}'")
     print(f"InvoiceID для проверки: {invoice_id}")
+    print(f"shp_user для проверки: {user_id}")
     print("------------------------------------\n")
 
-    signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{invoice_id}:{password}"
+    # ИСПРАВЛЕНО: Добавляем shp_user в строку для генерации подписи
+    signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{invoice_id}:{password}:shp_user={user_id}"
     signature_hash = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
     
     url = (f"https://auth.robokassa.ru/Merchant/WebService/Service.asmx/OpState?"
@@ -71,14 +81,14 @@ async def check_payment(invoice_id: int) -> bool:
                 text_response = (await response.text()).lstrip('\ufeff')
                 print(f"ПОЛУЧЕН ОТВЕТ ОТ ROBOKASSA:\n{text_response}\n")
                 
-                # ... остальной код парсинга ...
                 if response.status == 200:
                     try:
                         root = ET.fromstring(text_response)
                         namespace = {'ns': 'http://merchant.roboxchange.com/WebService/'}
                         result_code_element = root.find("ns:Result/ns:Code", namespace)
                         if result_code_element is not None and result_code_element.text != '0':
-                            error_desc = root.find("ns:Result/ns:Description", namespace).text
+                            error_desc_element = root.find("ns:Result/ns:Description", namespace)
+                            error_desc = error_desc_element.text if error_desc_element is not None else "No description"
                             print(f"ОШИБКА ОТ ROBOKASSA: Код {result_code_element.text} - {error_desc}")
                             return False
                         state_code_element = root.find("ns:State/ns:Code", namespace)
