@@ -36,7 +36,7 @@ def generate_payment_link(user_id: int, amount: int, invoice_id: int) -> str:
     return link
 
 async def check_payment(invoice_id: int) -> bool:
-    """Проверяет статус оплаты счёта и логирует полный ответ."""
+    """Проверяет статус оплаты счёта и корректно парсит ответ с неймспейсом."""
     
     password = ROBOKASSA_TEST_PASSWORD_2 if IS_TEST == 1 else ROBOKASSA_PASSWORD_2
     
@@ -53,33 +53,31 @@ async def check_payment(invoice_id: int) -> bool:
         try:
             async with session.get(url) as response:
                 if response.status == 200:
-                    text_response = await response.text()
+                    # Убираем BOM-символ из начала ответа, если он есть
+                    text_response = (await response.text()).lstrip('\ufeff')
                     
-                    # --- УЛУЧШЕННОЕ ЛОГИРОВАНИЕ ---
                     print("="*50)
-                    print(f"НАЧАЛО ОТВЕТА ОТ ROBOKASSA ДЛЯ СЧЕТА #{invoice_id}")
-                    print(text_response)
-                    print("КОНЕЦ ОТВЕТА ОТ ROBOKASSA")
+                    print(f"ОТВЕТ ОТ ROBOKASSA ДЛЯ СЧЕТА #{invoice_id}:\n{text_response}")
                     print("="*50)
-                    # --------------------------------
 
                     try:
                         root = ET.fromstring(text_response)
                         
-                        # Ищем код результата операции
-                        result_code = root.find(".//Result/Code")
-                        if result_code is not None and int(result_code.text) != 0:
-                            error_description = root.find(".//Result/Description").text
-                            print(f"ОШИБКА ОТ ROBOKASSA: Код {result_code.text} - {error_description}")
+                        # ИЗМЕНЕНО: Добавляем обработку пространства имен (namespace)
+                        namespace = {'ns': 'http://merchant.roboxchange.com/WebService/'}
+                        
+                        result_code_element = root.find("ns:Result/ns:Code", namespace)
+                        if result_code_element is not None and result_code_element.text != '0':
+                            error_desc = root.find("ns:Result/ns:Description", namespace).text
+                            print(f"ОШИБКА ОТ ROBOKASSA: Код {result_code_element.text} - {error_desc}")
                             return False
 
-                        # Если ошибки нет, ищем статус платежа
-                        state_code_element = root.find(".//State/Code")
+                        state_code_element = root.find("ns:State/ns:Code", namespace)
                         if state_code_element is not None and state_code_element.text == '100':
                             print("Платеж подтвержден (код 100).")
                             return True
                         else:
-                            status_text = state_code_element.text if state_code_element is not None else 'не найден'
+                            status_text = state_code_element.text if state_code_element is not None else 'статус не найден'
                             print(f"Платеж НЕ подтвержден. Текущий статус: {status_text}")
                             return False
 
