@@ -211,20 +211,25 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     tariff = callback.data.split("_")[1]
     prices = load_prices()
     amount = prices.get(tariff)
-    if not amount: return await callback.answer("Тариф не найден.", show_alert=True)
+    if not amount: 
+        return await callback.answer("Тариф не найден.", show_alert=True)
     
-    # ИЗМЕНЕНО: invoice_id теперь строка, чтобы избежать переполнения
-    invoice_id = f"{user_id}{int(time.time())}"
+    # ИЗМЕНЕНО: Сначала создаем запись в БД и получаем уникальный ID
+    invoice_id = await db.add_pending_payment(user_id, tariff, amount)
+    if not invoice_id:
+        return await callback.answer("Не удалось создать счет. Попробуйте позже.", show_alert=True)
+
+    payment_link = robokassa_api.generate_payment_link(user_id, amount, invoice_id)
     
-    payment_link = robokassa_api.generate_payment_link(user_id, amount, int(invoice_id))
-    await db.add_pending_payment(invoice_id, user_id, tariff, amount)
     await state.update_data(invoice_id=invoice_id)
     await state.set_state(UserState.waiting_for_payment_check)
+    
     await callback.message.edit_text(
         get_text('buy_prompt', tariff=tariff, amount=amount),
         reply_markup=kb.payment_keyboard(payment_link, amount)
     )
     await callback.answer()
+
 
 @router.callback_query(F.data == "check_robokassa_payment", UserState.waiting_for_payment_check)
 async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMContext):
@@ -241,7 +246,7 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
         return
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
-    is_paid = await robokassa_api.check_payment(int(invoice_id))
+    is_paid = await robokassa_api.check_payment(invoice_id)
     
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.delete()

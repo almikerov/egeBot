@@ -6,7 +6,7 @@ from typing import Tuple, Optional, List
 from config import SUPER_ADMIN_ID
 
 DB_FILE = 'users.db'
-TIMEOUT = 20  # Увеличено время ожидания до 20 секунд
+TIMEOUT = 20
 
 async def cleanup_old_pending_payments():
     """Удаляет из pending_payments счета, созданные более 24 часов назад."""
@@ -54,9 +54,10 @@ async def db_start():
         )
     """)
     
+    # ИЗМЕНЕНО: invoice_id теперь будет автоматически генерироваться базой данных
     cur.execute("""
         CREATE TABLE IF NOT EXISTS pending_payments (
-            invoice_id TEXT PRIMARY KEY,
+            invoice_id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             tariff TEXT,
             amount INTEGER,
@@ -72,19 +73,21 @@ async def db_start():
     db.commit()
     db.close()
 
-async def add_pending_payment(invoice_id: str, user_id: int, tariff: str, amount: int):
-    """Добавляет информацию о новом счете в базу данных."""
+async def add_pending_payment(user_id: int, tariff: str, amount: int) -> int:
+    """Добавляет информацию о новом счете в базу данных и возвращает ID счета."""
     db = sq.connect(DB_FILE, timeout=TIMEOUT)
     cur = db.cursor()
     creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur.execute(
-        "INSERT INTO pending_payments (invoice_id, user_id, tariff, amount, created_at) VALUES (?, ?, ?, ?, ?)",
-        (invoice_id, user_id, tariff, amount, creation_time)
+        "INSERT INTO pending_payments (user_id, tariff, amount, created_at) VALUES (?, ?, ?, ?)",
+        (user_id, tariff, amount, creation_time)
     )
+    invoice_id = cur.lastrowid
     db.commit()
     db.close()
+    return invoice_id
 
-async def get_pending_payment(invoice_id: str) -> Optional[tuple]:
+async def get_pending_payment(invoice_id: int) -> Optional[tuple]:
     """Получает информацию о счете из базы данных."""
     db = sq.connect(DB_FILE, timeout=TIMEOUT)
     cur = db.cursor()
@@ -93,7 +96,7 @@ async def get_pending_payment(invoice_id: str) -> Optional[tuple]:
     db.close()
     return payment_data
 
-async def remove_pending_payment(invoice_id: str):
+async def remove_pending_payment(invoice_id: int):
     """Удаляет информацию о счете после успешной оплаты."""
     db = sq.connect(DB_FILE, timeout=TIMEOUT)
     cur = db.cursor()
