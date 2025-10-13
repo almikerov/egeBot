@@ -33,6 +33,11 @@ class AdminState(StatesGroup):
     waiting_for_new_price = State()
     waiting_for_admin_id_to_add = State()
     waiting_for_admin_id_to_remove = State()
+    giving_subscription_getting_id = State()
+    giving_subscription_getting_days = State()
+    adding_tasks_getting_id = State()
+    adding_tasks_getting_count = State()
+
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def split_message(text: str, chunk_size: int = 4000):
@@ -82,7 +87,6 @@ async def get_user_status_text(user_id: int) -> str:
             return get_text('status_subscribed', end_date=formatted_date)
         return get_text('status_subscribed_no_date')
 
-    # ИЗМЕНЕНО: Используем единый счетчик и новый текст
     if tasks_info['tasks_left'] > 0:
         return get_text('status_tasks_left', tasks_left=tasks_info['tasks_left'])
     else:
@@ -202,7 +206,6 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "check_robokassa_payment", UserState.waiting_for_payment_check)
 async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMContext):
-    # ИЗМЕНЕНО: Удален отдельный обработчик для последней оплаты, вся логика здесь.
     state_data = await state.get_data()
     invoice_id = state_data.get('invoice_id')
     if not invoice_id:
@@ -233,7 +236,6 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
             await db.set_subscription(user_id, days)
             await callback.message.answer(get_text('payment_success_subscription', days=days))
         elif tariff == "single":
-            # ИЗМЕНЕНО: Вызываем новую функцию add_tasks
             await db.add_tasks(user_id, 1)
             await callback.message.answer(get_text('payment_success_single'))
         await send_main_menu(callback.message, user_id)
@@ -245,7 +247,6 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
 
 async def check_user_can_get_task(user_id: int, message: types.Message) -> bool:
     tasks_info = await db.get_available_tasks(user_id)
-    # ИЗМЕНЕНО: Проверяем единый счетчик tasks_left
     if not (tasks_info["is_subscribed"] or tasks_info["tasks_left"] > 0):
         prices = load_prices()
         if isinstance(message, CallbackQuery):
@@ -337,6 +338,8 @@ async def voice_message_handler(message: Message, state: FSMContext):
 async def incorrect_message_handler(message: Message):
     await message.answer(get_text('voice_error'))
 
+# --- АДМИН-ПАНЕЛЬ ---
+
 @router.message(Command(ADMIN_PASSWORD))
 async def admin_login(message: Message, state: FSMContext):
     if await is_admin(message.from_user.id):
@@ -351,6 +354,7 @@ async def show_admin_menu(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(get_text('admin_welcome'), reply_markup=kb.admin_menu_keyboard())
     await callback.answer()
 
+# --- Редактирование цен ---
 @router.callback_query(F.data == "admin_edit_prices")
 async def admin_edit_prices_start(callback: CallbackQuery):
     prices = load_prices()
@@ -384,27 +388,48 @@ async def admin_receive_new_price(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(f"Цена для тарифа '{tariff}' успешно изменена на {new_price} RUB.", reply_markup=kb.admin_menu_keyboard())
 
+# --- Управление администраторами ---
 @router.callback_query(F.data == "admin_manage_admins")
 async def admin_management_menu(callback: CallbackQuery):
     await callback.message.edit_text("Меню управления администраторами:", reply_markup=kb.admin_management_keyboard())
     await callback.answer()
 
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ
 @router.callback_query(F.data == "admin_view_admins")
 async def view_admins(callback: CallbackQuery):
     admins_ids = await db.get_admins()
+    if not admins_ids:
+        await callback.message.edit_text("Список администраторов пуст.", reply_markup=kb.back_to_admins_menu_keyboard())
+        await callback.answer()
+        return
+
     text_lines = ["*Список администраторов:*"]
     for admin_id in admins_ids:
         try:
             chat = await callback.bot.get_chat(admin_id)
             display_name = escape_markdown(chat.full_name or chat.username or f"User {admin_id}")
-            line = f"• [{display_name}](tg://user?id={admin_id}) (`{admin_id}`)"
+            # Скобки вокруг ID теперь тоже экранируются
+            line = f"• [{display_name}](tg://user?id={admin_id}) \\(`{admin_id}`\\)"
         except Exception:
             line = f"• [User {admin_id}](tg://user?id={admin_id}) \\(ID не найден\\)"
         if admin_id == SUPER_ADMIN_ID:
             line += " \\(⭐ Супер\\-админ\\)"
         text_lines.append(line)
-    await callback.message.edit_text("\n".join(text_lines), parse_mode="MarkdownV2", reply_markup=kb.back_to_admins_menu_keyboard())
+    
+    try:
+        await callback.message.edit_text(
+            "\n".join(text_lines), 
+            parse_mode="MarkdownV2", 
+            reply_markup=kb.back_to_admins_menu_keyboard()
+        )
+    except TelegramBadRequest as e:
+        print(f"Ошибка при отображении списка админов: {e}")
+        # В случае ошибки отправляем простой текст без форматирования
+        simple_text = "Список администраторов:\n" + "\n".join([f"ID: {admin_id}" for admin_id in admins_ids])
+        await callback.message.edit_text(simple_text, reply_markup=kb.back_to_admins_menu_keyboard())
+
     await callback.answer()
+
 
 @router.callback_query(F.data == "admin_add_admin")
 async def add_admin_start(callback: CallbackQuery, state: FSMContext):
@@ -414,25 +439,11 @@ async def add_admin_start(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminState.waiting_for_admin_id_to_add, F.text)
 async def add_admin_finish(message: Message, state: FSMContext):
-    user_input = message.text.strip()
-    admin_id = None
-    if user_input.isdigit():
-        admin_id = int(user_input)
-    elif user_input.startswith('@'):
-        username = user_input[1:]
-        user_data = await db.get_user_by_username(username)
-        if user_data:
-            admin_id = user_data[0]
-        else:
-            await message.answer(f"Пользователь @{username} не найден.")
-            return
-    else:
-        await message.answer("Неверный формат. Пришлите ID или @username.")
-        return
-    if admin_id:
-        await db.add_admin(admin_id)
+    user_id = await get_user_id_from_input(message)
+    if user_id:
+        await db.add_admin(user_id)
         await state.clear()
-        await message.answer(get_text('admin_add_success', id=admin_id), reply_markup=kb.admin_management_keyboard())
+        await message.answer(get_text('admin_add_success', id=user_id), reply_markup=kb.admin_management_keyboard())
 
 @router.callback_query(F.data == "admin_remove_admin")
 async def remove_admin_start(callback: CallbackQuery, state: FSMContext):
@@ -454,6 +465,7 @@ async def remove_admin_finish(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(get_text('admin_remove_success', id=admin_id), reply_markup=kb.admin_management_keyboard())
 
+# --- Просмотр подписчиков ---
 @router.callback_query(F.data == "admin_view_subscribed")
 async def view_subscribed_users(callback: CallbackQuery):
     users = await db.get_subscribed_users()
@@ -469,11 +481,101 @@ async def view_subscribed_users(callback: CallbackQuery):
             except Exception:
                 display_name = escape_markdown(username or f"User {user_id}")
             safe_end_date = escape_markdown(end_date)
-            text += f"• [{display_name}](tg://user?id={user_id}) (`{user_id}`)\n"
+            text += f"• [{display_name}](tg://user?id={user_id}) \\(`{user_id}`\\)\n"
             text += f"  *Подписка до:* {safe_end_date}\n\n"
     await callback.message.edit_text(text, parse_mode='MarkdownV2', reply_markup=kb.back_to_admin_menu_keyboard())
     await callback.answer()
 
+# --- УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ВРУЧНУЮ ---
+
+async def get_user_id_from_input(message: Message) -> int | None:
+    """Универсальная функция для получения ID пользователя по тексту."""
+    user_input = message.text.strip()
+    if user_input.isdigit():
+        return int(user_input)
+    elif user_input.startswith('@'):
+        username = user_input[1:]
+        user_data = await db.get_user_by_username(username)
+        if user_data:
+            return user_data[0]
+        else:
+            await message.answer(get_text('admin_user_not_found'))
+            return None
+    else:
+        await message.answer("Неверный формат. Пришлите ID или @username.")
+        return None
+
+@router.callback_query(F.data == "admin_manage_users")
+async def manage_users_menu(callback: CallbackQuery):
+    await callback.message.edit_text(
+        get_text('admin_manage_users_prompt'),
+        reply_markup=kb.user_management_keyboard()
+    )
+    await callback.answer()
+
+# Выдача подписки
+@router.callback_query(F.data == "admin_give_subscription")
+async def give_subscription_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminState.giving_subscription_getting_id)
+    await callback.message.edit_text(get_text('admin_user_id_prompt'))
+    await callback.answer()
+
+@router.message(AdminState.giving_subscription_getting_id, F.text)
+async def give_subscription_get_id(message: Message, state: FSMContext):
+    user_id = await get_user_id_from_input(message)
+    if user_id:
+        await state.update_data(target_user_id=user_id)
+        await state.set_state(AdminState.giving_subscription_getting_days)
+        await message.answer(get_text('admin_subscription_days_prompt', user_id=user_id))
+
+@router.message(AdminState.giving_subscription_getting_days, F.text)
+async def give_subscription_get_days(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Ошибка: введите количество дней числом.")
+        return
+    days = int(message.text)
+    user_data = await state.get_data()
+    user_id = user_data.get('target_user_id')
+    
+    await db.set_subscription(user_id, days)
+    await state.clear()
+    await message.answer(
+        get_text('admin_subscription_success', days=days, user_id=user_id),
+        reply_markup=kb.admin_menu_keyboard()
+    )
+
+# Начисление заданий
+@router.callback_query(F.data == "admin_add_tasks")
+async def add_tasks_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminState.adding_tasks_getting_id)
+    await callback.message.edit_text(get_text('admin_user_id_prompt'))
+    await callback.answer()
+
+@router.message(AdminState.adding_tasks_getting_id, F.text)
+async def add_tasks_get_id(message: Message, state: FSMContext):
+    user_id = await get_user_id_from_input(message)
+    if user_id:
+        await state.update_data(target_user_id=user_id)
+        await state.set_state(AdminState.adding_tasks_getting_count)
+        await message.answer(get_text('admin_tasks_count_prompt', user_id=user_id))
+
+@router.message(AdminState.adding_tasks_getting_count, F.text)
+async def add_tasks_get_count(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Ошибка: введите количество заданий числом.")
+        return
+    count = int(message.text)
+    user_data = await state.get_data()
+    user_id = user_data.get('target_user_id')
+    
+    await db.add_tasks(user_id, count)
+    await state.clear()
+    await message.answer(
+        get_text('admin_tasks_success', count=count, user_id=user_id),
+        reply_markup=kb.admin_menu_keyboard()
+    )
+
+# --- Обработка неизвестных команд ---
 @router.message(F.text)
 async def handle_unknown_text(message: Message):
     await message.answer(get_text('unknown_command_instruction'))

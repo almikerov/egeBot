@@ -32,7 +32,6 @@ def web_app_keyboard(url: str):
 
 def subscribe_menu_keyboard(prices: dict):
     """Возвращает клавиатуру для выбора тарифа подписки с актуальными ценами."""
-    # ИЗМЕНЕНО: Убрана отдельная кнопка проверки платежа
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"Неделя - {prices.get('week', 'N/A')} RUB", callback_data="buy_week")],
         [InlineKeyboardButton(text=f"Месяц - {prices.get('month', 'N/A')} RUB", callback_data="buy_month")],
@@ -76,7 +75,18 @@ def admin_menu_keyboard():
         [InlineKeyboardButton(text="💰 Изменить цены", callback_data="admin_edit_prices")],
         [InlineKeyboardButton(text="👑 Администраторы", callback_data="admin_manage_admins")],
         [InlineKeyboardButton(text="👥 Пользователи с подпиской", callback_data="admin_view_subscribed")],
+        # НОВАЯ КНОПКА
+        [InlineKeyboardButton(text="👨‍💻 Управление пользователями", callback_data="admin_manage_users")],
         [InlineKeyboardButton(text="⬅️ Выйти из админ-панели", callback_data="main_menu")]
+    ])
+
+# НОВОЕ МЕНЮ
+def user_management_keyboard():
+    """Клавиатура для управления пользователями."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗓️ Выдать подписку", callback_data="admin_give_subscription")],
+        [InlineKeyboardButton(text="🎟️ Начислить задания", callback_data="admin_add_tasks")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")]
     ])
 
 def back_to_admin_menu_keyboard():
