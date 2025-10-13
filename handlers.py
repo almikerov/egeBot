@@ -594,11 +594,16 @@ async def edit_prompt_select_type(callback: CallbackQuery, state: FSMContext):
     await state.update_data(prompt_task_type=task_type)
     await state.set_state(AdminState.editing_prompt_waiting_for_text)
     
-    # ИСПРАВЛЕНО: Убран parse_mode, чтобы избежать ошибок форматирования
-    await callback.message.edit_text(
-        get_text('admin_current_prompt', task_type=task_type, prompt=current_prompt)
+    # ИСПРАВЛЕНО: Формируем текст вручную, чтобы избежать ошибок форматирования и показать "сырой" текст.
+    text_to_send = (
+        f"Текущий промпт для '{task_type}':\n\n"
+        f"{current_prompt}\n\n"
+        "Отправьте новый текст промпта. Используйте {task_text} и {user_text} как переменные, если это необходимо."
     )
+
+    await callback.message.edit_text(text_to_send)
     await callback.answer()
+
 
 @router.message(AdminState.editing_prompt_waiting_for_text, F.text)
 async def edit_prompt_receive_text(message: Message, state: FSMContext):
