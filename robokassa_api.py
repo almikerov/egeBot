@@ -12,7 +12,7 @@ from config import (
 
 # --- ГЛАВНЫЙ ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМА ---
 # 1 = Тестовый режим, 0 = Боевой режим
-IS_TEST = 1
+IS_TEST = 0
 
 
 def _get_credentials():
