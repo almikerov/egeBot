@@ -32,10 +32,8 @@ def generate_payment_link(amount: int, invoice_id: int) -> str:
     password_1, _ = _get_credentials()
     description = "Подписка на AI-репетитора"
     
-    # ИСПРАВЛЕНО: Сумма теперь форматируется в строку с двумя знаками после точки
     formatted_amount = f"{amount:.2f}"
 
-    # ИСПРАВЛЕНО: Подпись теперь использует отформатированную сумму
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{formatted_amount}:{invoice_id}:{password_1}"
     signature_hash = hashlib.md5(signature_str.encode("utf-8")).hexdigest()
 
@@ -47,7 +45,6 @@ def generate_payment_link(amount: int, invoice_id: int) -> str:
     link = (
         f"https://auth.robokassa.ru/Merchant/Index.aspx?"
         f"MerchantLogin={ROBOKASSA_MERCHANT_LOGIN}&"
-        # ИСПРАВЛЕНО: В ссылку также передается отформатированная сумма
         f"OutSum={formatted_amount}&"
         f"InvId={invoice_id}&"
         f"Description={description}&"
@@ -64,7 +61,6 @@ async def check_payment(invoice_id: int) -> bool:
     """
     _, password_2 = _get_credentials()
 
-    # Подпись для проверки без shp_ параметров
     signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{invoice_id}:{password_2}"
     signature_hash = hashlib.md5(signature_str.encode("utf-8")).hexdigest()
 
@@ -96,31 +92,36 @@ async def check_payment(invoice_id: int) -> bool:
                 root = ET.fromstring(text_response)
                 namespace = {"ns": "http://merchant.roboxchange.com/WebService/"}
 
-                # Получаем теги верхнего уровня (без вложенности)
-                result_code = root.find("ns:Result", namespace)
-                state_code = root.find("ns:State", namespace) or root.find("ns:StateCode", namespace)
+                # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+                # Ищем вложенные теги <Code> внутри <Result> и <State>
+                result_code_element = root.find("ns:Result/ns:Code", namespace)
+                state_code_element = root.find("ns:State/ns:Code", namespace)
 
                 # Проверка кода результата
-                if result_code is None:
-                    print("[ROBOKASSA LOG] Ошибка: Тег <Result> не найден.")
+                if result_code_element is None:
+                    print("[ROBOKASSA LOG] Ошибка: Тег <Result/Code> не найден.")
                     return False
-                if result_code.text.strip() != "0":
-                    print(f"[ROBOKASSA LOG] Ошибка: Result={result_code.text.strip()}")
+                if result_code_element.text.strip() != "0":
+                    print(f"[ROBOKASSA LOG] Ошибка: Result Code={result_code_element.text.strip()}")
                     return False
 
                 # Проверка состояния платежа
-                if state_code is None:
-                    print("[ROBOKASSA LOG] Ошибка: Тег <State> не найден.")
-                    return False
+                if state_code_element is None:
+                    # Оставляем проверку на старый формат <StateCode> как запасной вариант
+                    state_code_element = root.find("ns:StateCode", namespace)
+                    if state_code_element is None:
+                        print("[ROBOKASSA LOG] Ошибка: Тег <State/Code> или <StateCode> не найден.")
+                        return False
 
-                print(f"[ROBOKASSA LOG] State={state_code.text.strip()}")
+                print(f"[ROBOKASSA LOG] State Code={state_code_element.text.strip()}")
 
-                if state_code.text.strip() == "100":
+                if state_code_element.text.strip() == "100":
                     print("[ROBOKASSA LOG] ✅ Платеж подтвержден (код 100).")
                     return True
                 else:
-                    print("[ROBOKASSA LOG] ❌ Платеж еще не завершен или отклонен.")
+                    print(f"[ROBOKASSA LOG] ❌ Платеж еще не завершен или отклонен (код {state_code_element.text.strip()}).")
                     return False
+                # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
         except Exception as e:
             print(f"[ROBOKASSA LOG] КРИТИЧЕСКАЯ ОШИБКА: {e}")
