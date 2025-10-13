@@ -31,9 +31,12 @@ def generate_payment_link(amount: int, invoice_id: int) -> str:
     """
     password_1, _ = _get_credentials()
     description = "Подписка на AI-репетитора"
+    
+    # ИСПРАВЛЕНО: Сумма теперь форматируется в строку с двумя знаками после точки
+    formatted_amount = f"{amount:.2f}"
 
-    # Подпись без shp_ параметров
-    signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{amount}:{invoice_id}:{password_1}"
+    # ИСПРАВЛЕНО: Подпись теперь использует отформатированную сумму
+    signature_str = f"{ROBOKASSA_MERCHANT_LOGIN}:{formatted_amount}:{invoice_id}:{password_1}"
     signature_hash = hashlib.md5(signature_str.encode("utf-8")).hexdigest()
 
     print("\n--- [ROBOKASSA LOG] ГЕНЕРАЦИЯ ССЫЛКИ ---")
@@ -44,7 +47,8 @@ def generate_payment_link(amount: int, invoice_id: int) -> str:
     link = (
         f"https://auth.robokassa.ru/Merchant/Index.aspx?"
         f"MerchantLogin={ROBOKASSA_MERCHANT_LOGIN}&"
-        f"OutSum={amount}&"
+        # ИСПРАВЛЕНО: В ссылку также передается отформатированная сумма
+        f"OutSum={formatted_amount}&"
         f"InvId={invoice_id}&"
         f"Description={description}&"
         f"SignatureValue={signature_hash}&"

@@ -54,7 +54,6 @@ async def db_start():
         )
     """)
     
-    # ИЗМЕНЕНО: invoice_id теперь будет автоматически генерироваться базой данных
     cur.execute("""
         CREATE TABLE IF NOT EXISTS pending_payments (
             invoice_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,6 +94,18 @@ async def get_pending_payment(invoice_id: int) -> Optional[tuple]:
     payment_data = cur.fetchone()
     db.close()
     return payment_data
+
+async def get_last_pending_invoice_id(user_id: int) -> Optional[int]:
+    """Находит последний созданный, но еще не удаленный счет для пользователя."""
+    db = sq.connect(DB_FILE, timeout=TIMEOUT)
+    cur = db.cursor()
+    cur.execute(
+        "SELECT invoice_id FROM pending_payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+        (user_id,)
+    )
+    result = cur.fetchone()
+    db.close()
+    return result[0] if result else None
 
 async def remove_pending_payment(invoice_id: int):
     """Удаляет информацию о счете после успешной оплаты."""
@@ -151,15 +162,25 @@ async def check_subscription(user_id: int) -> Tuple[bool, Optional[str]]:
     return False, None
 
 async def get_available_tasks(user_id: int) -> dict:
+    """
+    Получает информацию о доступных заданиях.
+    ИСПРАВЛЕНО: Теперь функция создает пользователя, если он не найден,
+    чтобы гарантировать корректный учет пробных попыток.
+    """
     db = sq.connect(DB_FILE, timeout=TIMEOUT)
     cur = db.cursor()
     cur.execute("SELECT trial_tasks_used, single_tasks_purchased FROM users WHERE user_id = ?", (user_id,))
     result = cur.fetchone()
-    db.close()
-    
+
     if not result:
-        return {"is_subscribed": False, "trials_left": 2, "single_left": 0}
-        
+        # Если пользователь не найден, создаем его с дефолтными значениями
+        cur.execute("INSERT OR IGNORE INTO users (user_id, username, trial_tasks_used, single_tasks_purchased) VALUES (?, ?, 0, 0)", (user_id, None))
+        db.commit()
+        # Теперь пользователь точно существует, и его результат - (0, 0)
+        result = (0, 0)
+
+    db.close()
+
     is_subscribed, _ = await check_subscription(user_id)
     trials_used, single_purchased = result
     

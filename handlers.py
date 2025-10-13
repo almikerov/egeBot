@@ -182,7 +182,6 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
     if not invoice_id:
         return await callback.answer("Не удалось создать счет.", show_alert=True)
 
-    # Вызываем упрощенную функцию, которая сама выберет пароль
     payment_link = robokassa_api.generate_payment_link(
         amount=amount,
         invoice_id=invoice_id
@@ -204,16 +203,37 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
     if not invoice_id:
         await callback.answer("Сессия проверки истекла.", show_alert=True)
         return await show_subscribe_menu(callback, state)
+    
+    await process_payment_check(callback, state, invoice_id)
 
+@router.callback_query(F.data == "check_last_payment")
+async def check_last_payment_handler(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает нажатие на кнопку для проверки последнего платежа."""
+    user_id = callback.from_user.id
+    last_invoice_id = await db.get_last_pending_invoice_id(user_id)
+    
+    if not last_invoice_id:
+        await callback.answer("Не найдено неоплаченных счетов.", show_alert=True)
+        return
+        
+    await process_payment_check(callback, state, last_invoice_id)
+
+async def process_payment_check(callback: CallbackQuery, state: FSMContext, invoice_id: int):
+    """Универсальная функция для проверки и начисления платежа."""
     payment_data = await db.get_pending_payment(invoice_id)
     if not payment_data:
-        await callback.answer("Счет не найден.", show_alert=True)
-        return await show_subscribe_menu(callback, state)
+        await callback.answer("Счет не найден или уже обработан.", show_alert=True)
+        await state.clear()
+        prices = load_prices()
+        await callback.message.edit_text(
+            get_text('subscribe_prompt'),
+            reply_markup=kb.subscribe_menu_keyboard(prices)
+        )
+        return
 
     user_id, tariff, _ = payment_data
     await callback.answer(get_text('payment_check_started'), show_alert=False)
 
-    # Вызываем упрощенную функцию, которая сама выберет пароль
     is_paid = await robokassa_api.check_payment(invoice_id=invoice_id)
     
     with contextlib.suppress(TelegramBadRequest):
@@ -231,6 +251,8 @@ async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMCon
             await callback.message.answer(get_text('payment_success_single'))
         await send_main_menu(callback.message, user_id)
     else:
+        await state.update_data(invoice_id=invoice_id)
+        await state.set_state(UserState.waiting_for_payment_check)
         await callback.message.answer(
             get_text('payment_failed'),
             reply_markup=kb.payment_failed_keyboard()
