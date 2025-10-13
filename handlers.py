@@ -37,7 +37,6 @@ class AdminState(StatesGroup):
     giving_subscription_getting_days = State()
     adding_tasks_getting_id = State()
     adding_tasks_getting_count = State()
-    # НОВЫЕ СОСТОЯНИЯ
     editing_prompt_selection = State()
     editing_prompt_waiting_for_text = State()
 
@@ -327,7 +326,8 @@ async def voice_message_handler(message: Message, state: FSMContext):
                     await message.answer(chunk, parse_mode="MarkdownV2")
                     await asyncio.sleep(0.5)
             except TelegramBadRequest:
-                await message.answer(⚠️ *Ошибка форматирования.* Отправляю как обычный текст:", parse_mode="MarkdownV2")
+                # ИСПРАВЛЕНО: Текст вынесен в texts.yml
+                await message.answer(get_text('format_error_text'), parse_mode="MarkdownV2")
                 for chunk in split_message(review):
                     await message.answer(chunk)
                     await asyncio.sleep(0.5)
@@ -575,7 +575,7 @@ async def add_tasks_get_count(message: Message, state: FSMContext):
         reply_markup=kb.admin_menu_keyboard()
     )
 
-# --- НОВЫЙ БЛОК: РЕДАКТОР ПРОМПТОВ ---
+# --- РЕДАКТОР ПРОМПТОВ ---
 @router.callback_query(F.data == "admin_edit_prompts")
 async def edit_prompts_start(callback: CallbackQuery, state: FSMContext):
     task_types = tm.get_task_types()
@@ -590,7 +590,6 @@ async def edit_prompts_start(callback: CallbackQuery, state: FSMContext):
 async def edit_prompt_select_type(callback: CallbackQuery, state: FSMContext):
     task_type = callback.data[len("edit_prompt_"):]
     
-    # Получаем текущий промпт из загруженных данных
     current_prompt = tm.tasks_data.get(task_type, {}).get('prompt', 'Промпт не найден.')
     
     await state.update_data(prompt_task_type=task_type)
