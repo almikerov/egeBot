@@ -318,18 +318,20 @@ async def voice_message_handler(message: Message, state: FSMContext):
             await message.answer(review)
         else:
             await db.use_task(message.from_user.id)
-            cleaned_review = clean_ai_response(review)
-            await message.answer("📝 *Ваш разбор ответа:*", parse_mode="MarkdownV2")
+            await message.answer("📝 **Ваш разбор ответа:**", parse_mode="Markdown")
             try:
-                escaped_review = escape_markdown(cleaned_review)
-                for chunk in split_message(escaped_review):
-                    await message.answer(chunk, parse_mode="MarkdownV2")
+                # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+                # Убраны escape_markdown и clean_ai_response, parse_mode изменен на "Markdown"
+                for chunk in split_message(review):
+                    await message.answer(chunk, parse_mode="Markdown")
                     await asyncio.sleep(0.5)
             except TelegramBadRequest:
-                await message.answer(get_text('format_error_text'), parse_mode="MarkdownV2")
+                # В случае ошибки, отправляем как обычный текст
+                await message.answer(get_text('format_error_text'))
                 for chunk in split_message(review):
                     await message.answer(chunk)
                     await asyncio.sleep(0.5)
+            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
         await send_main_menu(message, message.from_user.id)
     finally:
         await state.clear()
