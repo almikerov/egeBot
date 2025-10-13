@@ -3,6 +3,7 @@
 import pandas as pd
 import random
 from typing import List, Dict, Optional, Tuple
+from openpyxl import load_workbook
 
 TASKS_FILE = 'tasks.xlsx'
 tasks_data = {}
@@ -78,6 +79,33 @@ def get_task_by_id(task_id: str) -> Optional[Tuple[str, Dict]]:
                 task['time_limit'] = int(float(time_limit_str)) if time_limit_str and str(time_limit_str).replace('.', '', 1).isdigit() else None
                 return prompt, task
     return None, None
+
+# --- НОВАЯ ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ ПРОМПТА ---
+def save_prompt(task_type: str, new_prompt: str) -> bool:
+    """Сохраняет новый промпт в файл tasks.xlsx и обновляет его в памяти."""
+    try:
+        # Обновляем промпт в оперативной памяти
+        if task_type in tasks_data:
+            tasks_data[task_type]['prompt'] = new_prompt
+        else:
+            return False
+
+        # Открываем Excel файл для записи
+        book = load_workbook(TASKS_FILE)
+        if task_type in book.sheetnames:
+            sheet = book[task_type]
+            # Записываем новый промпт в первую ячейку (A1)
+            sheet['A1'] = new_prompt
+            book.save(TASKS_FILE)
+            print(f"Промпт для '{task_type}' успешно сохранен в файл.")
+            return True
+        else:
+            print(f"ОШИБКА: Лист '{task_type}' не найден в файле {TASKS_FILE}.")
+            return False
+    except Exception as e:
+        print(f"ОШИБКА при сохранении промпта в файл: {e}")
+        return False
+
 
 # Загружаем данные один раз при старте бота
 load_data()

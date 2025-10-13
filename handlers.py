@@ -37,6 +37,9 @@ class AdminState(StatesGroup):
     giving_subscription_getting_days = State()
     adding_tasks_getting_id = State()
     adding_tasks_getting_count = State()
+    # НОВЫЕ СОСТОЯНИЯ
+    editing_prompt_selection = State()
+    editing_prompt_waiting_for_text = State()
 
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
@@ -324,7 +327,7 @@ async def voice_message_handler(message: Message, state: FSMContext):
                     await message.answer(chunk, parse_mode="MarkdownV2")
                     await asyncio.sleep(0.5)
             except TelegramBadRequest:
-                await message.answer("⚠️ *Ошибка форматирования.* Отправляю как обычный текст:", parse_mode="MarkdownV2")
+                await message.answer(⚠️ *Ошибка форматирования.* Отправляю как обычный текст:", parse_mode="MarkdownV2")
                 for chunk in split_message(review):
                     await message.answer(chunk)
                     await asyncio.sleep(0.5)
@@ -394,7 +397,6 @@ async def admin_management_menu(callback: CallbackQuery):
     await callback.message.edit_text("Меню управления администраторами:", reply_markup=kb.admin_management_keyboard())
     await callback.answer()
 
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ
 @router.callback_query(F.data == "admin_view_admins")
 async def view_admins(callback: CallbackQuery):
     admins_ids = await db.get_admins()
@@ -408,7 +410,6 @@ async def view_admins(callback: CallbackQuery):
         try:
             chat = await callback.bot.get_chat(admin_id)
             display_name = escape_markdown(chat.full_name or chat.username or f"User {admin_id}")
-            # Скобки вокруг ID теперь тоже экранируются
             line = f"• [{display_name}](tg://user?id={admin_id}) \\(`{admin_id}`\\)"
         except Exception:
             line = f"• [User {admin_id}](tg://user?id={admin_id}) \\(ID не найден\\)"
@@ -424,7 +425,6 @@ async def view_admins(callback: CallbackQuery):
         )
     except TelegramBadRequest as e:
         print(f"Ошибка при отображении списка админов: {e}")
-        # В случае ошибки отправляем простой текст без форматирования
         simple_text = "Список администраторов:\n" + "\n".join([f"ID: {admin_id}" for admin_id in admins_ids])
         await callback.message.edit_text(simple_text, reply_markup=kb.back_to_admins_menu_keyboard())
 
@@ -574,6 +574,52 @@ async def add_tasks_get_count(message: Message, state: FSMContext):
         get_text('admin_tasks_success', count=count, user_id=user_id),
         reply_markup=kb.admin_menu_keyboard()
     )
+
+# --- НОВЫЙ БЛОК: РЕДАКТОР ПРОМПТОВ ---
+@router.callback_query(F.data == "admin_edit_prompts")
+async def edit_prompts_start(callback: CallbackQuery, state: FSMContext):
+    task_types = tm.get_task_types()
+    await state.set_state(AdminState.editing_prompt_selection)
+    await callback.message.edit_text(
+        get_text('admin_edit_prompts_select'),
+        reply_markup=kb.prompt_editor_keyboard(task_types)
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("edit_prompt_"), AdminState.editing_prompt_selection)
+async def edit_prompt_select_type(callback: CallbackQuery, state: FSMContext):
+    task_type = callback.data[len("edit_prompt_"):]
+    
+    # Получаем текущий промпт из загруженных данных
+    current_prompt = tm.tasks_data.get(task_type, {}).get('prompt', 'Промпт не найден.')
+    
+    await state.update_data(prompt_task_type=task_type)
+    await state.set_state(AdminState.editing_prompt_waiting_for_text)
+    
+    await callback.message.edit_text(
+        get_text('admin_current_prompt', task_type=task_type, prompt=current_prompt),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@router.message(AdminState.editing_prompt_waiting_for_text, F.text)
+async def edit_prompt_receive_text(message: Message, state: FSMContext):
+    new_prompt = message.text
+    user_data = await state.get_data()
+    task_type = user_data.get('prompt_task_type')
+    
+    if tm.save_prompt(task_type, new_prompt):
+        await message.answer(
+            get_text('admin_prompt_updated', task_type=task_type),
+            reply_markup=kb.admin_menu_keyboard()
+        )
+    else:
+        await message.answer(
+            get_text('admin_prompt_update_failed'),
+            reply_markup=kb.admin_menu_keyboard()
+        )
+    await state.clear()
+
 
 # --- Обработка неизвестных команд ---
 @router.message(F.text)

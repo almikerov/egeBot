@@ -75,12 +75,22 @@ def admin_menu_keyboard():
         [InlineKeyboardButton(text="💰 Изменить цены", callback_data="admin_edit_prices")],
         [InlineKeyboardButton(text="👑 Администраторы", callback_data="admin_manage_admins")],
         [InlineKeyboardButton(text="👥 Пользователи с подпиской", callback_data="admin_view_subscribed")],
-        # НОВАЯ КНОПКА
         [InlineKeyboardButton(text="👨‍💻 Управление пользователями", callback_data="admin_manage_users")],
+        # НОВАЯ КНОПКА
+        [InlineKeyboardButton(text="✍️ Редактор промптов", callback_data="admin_edit_prompts")],
         [InlineKeyboardButton(text="⬅️ Выйти из админ-панели", callback_data="main_menu")]
     ])
 
-# НОВОЕ МЕНЮ
+# НОВАЯ КЛАВИАТУРА
+def prompt_editor_keyboard(task_types: List[str]):
+    """Создает клавиатуру для выбора типа задания для редактирования промпта."""
+    buttons = []
+    for title in task_types:
+        buttons.append([InlineKeyboardButton(text=title, callback_data=f"edit_prompt_{title}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def user_management_keyboard():
     """Клавиатура для управления пользователями."""
     return InlineKeyboardMarkup(inline_keyboard=[
