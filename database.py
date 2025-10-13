@@ -38,13 +38,14 @@ async def db_start():
     db = sq.connect(DB_FILE, timeout=TIMEOUT)
     cur = db.cursor()
     
+    # ИЗМЕНЕНО: Поля trial_tasks_used и single_tasks_purchased заменены на одно tasks_available
+    # DEFAULT 2 автоматически дает 2 пробные попытки каждому новому пользователю.
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             subscription_end_date TEXT,
-            trial_tasks_used INTEGER DEFAULT 0,
-            single_tasks_purchased INTEGER DEFAULT 0
+            tasks_available INTEGER DEFAULT 2 
         )
     """)
     
@@ -64,6 +65,15 @@ async def db_start():
         )
     """)
     
+    # Код для миграции со старой структуры (можно удалить после первого запуска)
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN tasks_available INTEGER DEFAULT 2")
+        print("Миграция: Добавлена колонка tasks_available.")
+        db.commit()
+    except sq.OperationalError:
+        pass # Колонка уже существует
+
+
     cur.execute("SELECT 1 FROM admins")
     if cur.fetchone() is None:
         cur.execute("INSERT INTO admins (user_id) VALUES (?)", (SUPER_ADMIN_ID,))
@@ -95,18 +105,6 @@ async def get_pending_payment(invoice_id: int) -> Optional[tuple]:
     db.close()
     return payment_data
 
-async def get_last_pending_invoice_id(user_id: int) -> Optional[int]:
-    """Находит последний созданный, но еще не удаленный счет для пользователя."""
-    db = sq.connect(DB_FILE, timeout=TIMEOUT)
-    cur = db.cursor()
-    cur.execute(
-        "SELECT invoice_id FROM pending_payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-        (user_id,)
-    )
-    result = cur.fetchone()
-    db.close()
-    return result[0] if result else None
-
 async def remove_pending_payment(invoice_id: int):
     """Удаляет информацию о счете после успешной оплаты."""
     db = sq.connect(DB_FILE, timeout=TIMEOUT)
@@ -120,6 +118,7 @@ async def add_user(user_id, username):
     cur = db.cursor()
     cur.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
     if cur.fetchone() is None:
+        # При создании нового пользователя tasks_available автоматически станет 2 (DEFAULT 2)
         cur.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, username))
     else:
         cur.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
@@ -164,58 +163,49 @@ async def check_subscription(user_id: int) -> Tuple[bool, Optional[str]]:
 async def get_available_tasks(user_id: int) -> dict:
     """
     Получает информацию о доступных заданиях.
-    ИСПРАВЛЕНО: Теперь функция создает пользователя, если он не найден,
-    чтобы гарантировать корректный учет пробных попыток.
     """
     db = sq.connect(DB_FILE, timeout=TIMEOUT)
     cur = db.cursor()
-    cur.execute("SELECT trial_tasks_used, single_tasks_purchased FROM users WHERE user_id = ?", (user_id,))
+    # ИЗМЕНЕНО: Выбираем новое поле tasks_available
+    cur.execute("SELECT tasks_available FROM users WHERE user_id = ?", (user_id,))
     result = cur.fetchone()
 
     if not result:
-        # Если пользователь не найден, создаем его с дефолтными значениями
-        cur.execute("INSERT OR IGNORE INTO users (user_id, username, trial_tasks_used, single_tasks_purchased) VALUES (?, ?, 0, 0)", (user_id, None))
+        # Если пользователь не найден, создаем его. tasks_available по умолчанию станет 2.
+        cur.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
         db.commit()
-        # Теперь пользователь точно существует, и его результат - (0, 0)
-        result = (0, 0)
+        result = (2,) # У нового пользователя 2 попытки
 
     db.close()
 
     is_subscribed, _ = await check_subscription(user_id)
-    trials_used, single_purchased = result
+    tasks_left = result[0]
     
     return {
         "is_subscribed": is_subscribed,
-        "trials_left": max(0, 2 - trials_used),
-        "single_left": single_purchased
+        "tasks_left": tasks_left
     }
 
+
 async def use_task(user_id: int):
+    """Списывает одно доступное задание, если нет подписки."""
     is_subscribed, _ = await check_subscription(user_id)
     if is_subscribed:
         return
 
     db = sq.connect(DB_FILE, timeout=TIMEOUT)
     cur = db.cursor()
-    cur.execute("SELECT trial_tasks_used, single_tasks_purchased FROM users WHERE user_id = ?", (user_id,))
-    result = cur.fetchone()
-    if not result:
-        db.close()
-        return
-
-    trials_used, single_purchased = result
-    if trials_used < 2:
-        cur.execute("UPDATE users SET trial_tasks_used = trial_tasks_used + 1 WHERE user_id = ?", (user_id,))
-    elif single_purchased > 0:
-        cur.execute("UPDATE users SET single_tasks_purchased = single_tasks_purchased - 1 WHERE user_id = ?", (user_id,))
-    
+    # ИЗМЕНЕНО: Логика списания упрощена
+    cur.execute("UPDATE users SET tasks_available = tasks_available - 1 WHERE user_id = ? AND tasks_available > 0", (user_id,))
     db.commit()
     db.close()
 
-async def add_single_tasks(user_id: int, count: int):
+async def add_tasks(user_id: int, count: int):
+    """Добавляет купленные задания пользователю."""
+    # ИЗМЕНЕНО: add_single_tasks переименована в add_tasks
     db = sq.connect(DB_FILE, timeout=TIMEOUT)
     cur = db.cursor()
-    cur.execute("UPDATE users SET single_tasks_purchased = single_tasks_purchased + ? WHERE user_id = ?", (count, user_id))
+    cur.execute("UPDATE users SET tasks_available = tasks_available + ? WHERE user_id = ?", (count, user_id))
     db.commit()
     db.close()
 

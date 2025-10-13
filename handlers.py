@@ -72,15 +72,19 @@ async def is_admin(user_id: int) -> bool:
 async def get_user_status_text(user_id: int) -> str:
     if await is_admin(user_id):
         return get_text('status_admin')
-    is_subscribed, end_date = await db.check_subscription(user_id)
-    if is_subscribed:
+        
+    tasks_info = await db.get_available_tasks(user_id)
+    
+    if tasks_info["is_subscribed"]:
+        is_subscribed, end_date = await db.check_subscription(user_id)
         if end_date and end_date != "admin":
             formatted_date = datetime.strptime(end_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
             return get_text('status_subscribed', end_date=formatted_date)
         return get_text('status_subscribed_no_date')
-    tasks_info = await db.get_available_tasks(user_id)
-    if tasks_info['trials_left'] > 0:
-        return get_text('status_trial', trials_left=tasks_info['trials_left'])
+
+    # ИЗМЕНЕНО: Используем единый счетчик и новый текст
+    if tasks_info['tasks_left'] > 0:
+        return get_text('status_tasks_left', tasks_left=tasks_info['tasks_left'])
     else:
         return get_text('status_no_tasks')
 
@@ -198,37 +202,19 @@ async def buy_handler(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "check_robokassa_payment", UserState.waiting_for_payment_check)
 async def check_robokassa_payment_handler(callback: CallbackQuery, state: FSMContext):
+    # ИЗМЕНЕНО: Удален отдельный обработчик для последней оплаты, вся логика здесь.
     state_data = await state.get_data()
     invoice_id = state_data.get('invoice_id')
     if not invoice_id:
-        await callback.answer("Сессия проверки истекла.", show_alert=True)
-        return await show_subscribe_menu(callback, state)
-    
-    await process_payment_check(callback, state, invoice_id)
-
-@router.callback_query(F.data == "check_last_payment")
-async def check_last_payment_handler(callback: CallbackQuery, state: FSMContext):
-    """Обрабатывает нажатие на кнопку для проверки последнего платежа."""
-    user_id = callback.from_user.id
-    last_invoice_id = await db.get_last_pending_invoice_id(user_id)
-    
-    if not last_invoice_id:
-        await callback.answer("Не найдено неоплаченных счетов.", show_alert=True)
+        await callback.answer("Сессия проверки истекла. Пожалуйста, выберите тариф заново.", show_alert=True)
+        await show_subscribe_menu(callback, state)
         return
-        
-    await process_payment_check(callback, state, last_invoice_id)
 
-async def process_payment_check(callback: CallbackQuery, state: FSMContext, invoice_id: int):
-    """Универсальная функция для проверки и начисления платежа."""
     payment_data = await db.get_pending_payment(invoice_id)
     if not payment_data:
         await callback.answer("Счет не найден или уже обработан.", show_alert=True)
         await state.clear()
-        prices = load_prices()
-        await callback.message.edit_text(
-            get_text('subscribe_prompt'),
-            reply_markup=kb.subscribe_menu_keyboard(prices)
-        )
+        await show_subscribe_menu(callback, state)
         return
 
     user_id, tariff, _ = payment_data
@@ -247,12 +233,11 @@ async def process_payment_check(callback: CallbackQuery, state: FSMContext, invo
             await db.set_subscription(user_id, days)
             await callback.message.answer(get_text('payment_success_subscription', days=days))
         elif tariff == "single":
-            await db.add_single_tasks(user_id, 1)
+            # ИЗМЕНЕНО: Вызываем новую функцию add_tasks
+            await db.add_tasks(user_id, 1)
             await callback.message.answer(get_text('payment_success_single'))
         await send_main_menu(callback.message, user_id)
     else:
-        await state.update_data(invoice_id=invoice_id)
-        await state.set_state(UserState.waiting_for_payment_check)
         await callback.message.answer(
             get_text('payment_failed'),
             reply_markup=kb.payment_failed_keyboard()
@@ -260,7 +245,8 @@ async def process_payment_check(callback: CallbackQuery, state: FSMContext, invo
 
 async def check_user_can_get_task(user_id: int, message: types.Message) -> bool:
     tasks_info = await db.get_available_tasks(user_id)
-    if not (tasks_info["is_subscribed"] or tasks_info["trials_left"] > 0 or tasks_info["single_left"] > 0):
+    # ИЗМЕНЕНО: Проверяем единый счетчик tasks_left
+    if not (tasks_info["is_subscribed"] or tasks_info["tasks_left"] > 0):
         prices = load_prices()
         if isinstance(message, CallbackQuery):
             await message.message.edit_text(get_text('no_tasks_left'), reply_markup=kb.subscribe_menu_keyboard(prices))

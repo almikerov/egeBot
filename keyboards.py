@@ -32,11 +32,11 @@ def web_app_keyboard(url: str):
 
 def subscribe_menu_keyboard(prices: dict):
     """Возвращает клавиатуру для выбора тарифа подписки с актуальными ценами."""
+    # ИЗМЕНЕНО: Убрана отдельная кнопка проверки платежа
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"Неделя - {prices.get('week', 'N/A')} RUB", callback_data="buy_week")],
         [InlineKeyboardButton(text=f"Месяц - {prices.get('month', 'N/A')} RUB", callback_data="buy_month")],
         [InlineKeyboardButton(text=f"1 задание - {prices.get('single', 'N/A')} RUB", callback_data="buy_single")],
-        [InlineKeyboardButton(text="✅ Проверить последнюю оплату", callback_data="check_last_payment")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
     ])
     
