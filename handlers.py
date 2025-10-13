@@ -326,7 +326,6 @@ async def voice_message_handler(message: Message, state: FSMContext):
                     await message.answer(chunk, parse_mode="MarkdownV2")
                     await asyncio.sleep(0.5)
             except TelegramBadRequest:
-                # ИСПРАВЛЕНО: Текст вынесен в texts.yml
                 await message.answer(get_text('format_error_text'), parse_mode="MarkdownV2")
                 for chunk in split_message(review):
                     await message.answer(chunk)
@@ -595,9 +594,9 @@ async def edit_prompt_select_type(callback: CallbackQuery, state: FSMContext):
     await state.update_data(prompt_task_type=task_type)
     await state.set_state(AdminState.editing_prompt_waiting_for_text)
     
+    # ИСПРАВЛЕНО: Убран parse_mode, чтобы избежать ошибок форматирования
     await callback.message.edit_text(
-        get_text('admin_current_prompt', task_type=task_type, prompt=current_prompt),
-        parse_mode="Markdown"
+        get_text('admin_current_prompt', task_type=task_type, prompt=current_prompt)
     )
     await callback.answer()
 
